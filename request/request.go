@@ -20,7 +20,7 @@ var (
 	once       sync.Once
 )
 
-type requestSigner func(req *http.Request, apiKey string, apiKeySecret string) error
+type requestSigner func(req *http.Request, apiKeyHeader, apiKey, signatureHeader, apiKeySecret string) error
 
 type requestOption struct {
 	lg                   *zap.Logger
@@ -29,7 +29,9 @@ type requestOption struct {
 	requestHeaders       map[string]string
 	requestBody          []byte
 	signer               requestSigner
+	apiKeyHeader         string
 	apiKey               string
+	signatureHeader      string
 	apiKeySecret         string
 	correlationIdKey     string
 	correlationId        string
@@ -54,7 +56,9 @@ func defaultRequestOption() *requestOption {
 		requestHeaders:       make(map[string]string),
 		requestBody:          nil,
 		signer:               nil,
+		apiKeyHeader:         "X-Api-Key",
 		apiKey:               "",
+		signatureHeader:      "X-Signature",
 		apiKeySecret:         "",
 		correlationIdKey:     "X-Correlation-ID",
 		correlationId:        "",
@@ -120,10 +124,12 @@ func WithRequestBodyFromJson(requestBody any) Option {
 	})
 }
 
-func WithRequestSigner(requestSigner requestSigner, apiKey string, apiKeySecret string) Option {
+func WithRequestSigner(requestSigner requestSigner, apiKeyHeader, apiKey, signatureHeader, apiKeySecret string) Option {
 	return optionFunc(func(option *requestOption) error {
 		option.signer = requestSigner
+		option.apiKeyHeader = apiKeyHeader
 		option.apiKey = apiKey
+		option.signatureHeader = signatureHeader
 		option.apiKeySecret = apiKeySecret
 		return nil
 	})
@@ -216,7 +222,7 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 
 	// sign the request
 	if option.signer != nil && option.apiKey != "" && option.apiKeySecret != "" {
-		if err := option.signer(req, option.apiKey, option.apiKeySecret); err != nil {
+		if err := option.signer(req, option.apiKeyHeader, option.apiKey, option.signatureHeader, option.apiKeySecret); err != nil {
 			return 0, nil, err
 		}
 	}
