@@ -9,6 +9,11 @@ import (
 	"github.com/infigaming-com/go-common/util"
 )
 
+const (
+	ApiKeyHeader    = "X-API-KEY"
+	SignatureHeader = "X-SIGNATURE"
+)
+
 func getCanonicalizedMessage(req *http.Request) []byte {
 	if req.Method == http.MethodGet {
 		queryParams := req.URL.Query()
