@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/infigaming-com/go-common/errors"
 	"github.com/infigaming-com/go-common/util"
 	"go.uber.org/zap"
 )
@@ -117,7 +117,7 @@ func WithRequestBodyFromJson(requestBody any) Option {
 	return optionFunc(func(option *requestOption) error {
 		jsonBody, err := json.Marshal(requestBody)
 		if err != nil {
-			return err
+			return ErrFailedToUnmarshalRequestBody
 		}
 		option.requestBody = jsonBody
 		return nil
@@ -138,7 +138,7 @@ func WithRequestSigner(requestSigner requestSigner, apiKeyHeader, apiKey, signat
 func WithSlowRequestThreshold(slowRequestThreshold time.Duration) Option {
 	return optionFunc(func(option *requestOption) error {
 		if slowRequestThreshold <= 0 {
-			return fmt.Errorf("invalid request option slow request threshold")
+			return ErrInvalidSlowRequestThreshold
 		}
 		option.slowRequestThreshold = slowRequestThreshold
 		return nil
@@ -196,7 +196,16 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 
 	req, err := http.NewRequestWithContext(ctx, method, requestUrl, bytes.NewReader(option.requestBody))
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, errors.NewError(
+			ErrCodeFailedToCreateRequest,
+			"failed to create request",
+			map[string]any{
+				"err":    err,
+				"method": method,
+				"url":    requestUrl,
+				"body":   option.requestBody,
+			},
+		)
 	}
 
 	query := req.URL.Query()
@@ -223,14 +232,26 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 	// sign the request
 	if option.signer != nil && option.apiKey != "" && option.apiKeySecret != "" {
 		if err := option.signer(req, option.apiKeyHeader, option.apiKey, option.signatureHeader, option.apiKeySecret); err != nil {
-			return 0, nil, err
+			return 0, nil, errors.NewError(
+				ErrCodeFailedToSignRequest,
+				"failed to sign request",
+				map[string]any{
+					"err": err,
+				},
+			)
 		}
 	}
 
 	requestStart := time.Now()
 	resp, err := getHttpClient().Do(req)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, errors.NewError(
+			ErrCodeFailedToSendRequest,
+			"failed to send request",
+			map[string]any{
+				"err": err,
+			},
+		)
 	}
 	defer resp.Body.Close()
 	requestDuration := time.Since(requestStart)
@@ -239,7 +260,13 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 
 	responseBody, err = io.ReadAll(resp.Body)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, errors.NewError(
+			ErrCodeFailedToReadResponseBody,
+			"failed to read response body",
+			map[string]any{
+				"err": err,
+			},
+		)
 	}
 
 	if requestDuration > option.slowRequestThreshold {
