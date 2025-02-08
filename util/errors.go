@@ -3,7 +3,7 @@ package util
 import "github.com/infigaming-com/go-common/errors"
 
 type UtilError struct {
-	baseErr *errors.Error
+	baseErr errors.Error
 }
 
 const (

@@ -5,7 +5,7 @@ import (
 )
 
 type RequestError struct {
-	baseErr      *errors.Error
+	baseErr      errors.Error
 	Method       string `json:"method,omitempty"`
 	URL          string `json:"url,omitempty"`
 	RequestBody  []byte `json:"request_body,omitempty"`
