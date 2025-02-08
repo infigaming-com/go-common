@@ -5,17 +5,17 @@ import (
 	"fmt"
 )
 
-type Ctxkey string
+type CtxKey string
 
 const (
-	CorrelationIdKey Ctxkey = "CorrelationId"
+	CorrelationIdKey CtxKey = "CorrelationId"
 )
 
-func ValueToCtx[T any](ctx context.Context, key Ctxkey, value T) context.Context {
+func ValueToCtx[T any](ctx context.Context, key CtxKey, value T) context.Context {
 	return context.WithValue(ctx, key, value)
 }
 
-func ValueFromCtx[T any](ctx context.Context, key Ctxkey) (T, error) {
+func ValueFromCtx[T any](ctx context.Context, key CtxKey) (T, error) {
 	valueFromCtx := ctx.Value(key)
 	if valueFromCtx == nil {
 		return *new(T), NewUtilError(ErrCodeValueNotFoundInContext, fmt.Sprintf("%v not found in context", key), nil, nil)
