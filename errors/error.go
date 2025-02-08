@@ -8,13 +8,17 @@ type Error struct {
 	StatusCode int    `json:"status_code,omitempty"`
 }
 
-func NewError(code int64, message string, cause error, details any) *Error {
+func NewError(code int64, message string, cause error) *Error {
 	return &Error{
 		Code:    code,
 		Message: message,
 		Cause:   cause,
-		Details: details,
 	}
+}
+
+func (e *Error) WithDetails(details any) *Error {
+	e.Details = details
+	return e
 }
 
 func (e *Error) WithStatusCode(statusCode int) *Error {
