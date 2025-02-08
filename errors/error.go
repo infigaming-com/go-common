@@ -1,10 +1,11 @@
 package errors
 
 type Error struct {
-	Code    int64  `json:"code"`
-	Message string `json:"message"`
-	Cause   error  // the underlying error
-	Details any    `json:"details,omitempty"`
+	Code       int64  `json:"code"`
+	Message    string `json:"message"`
+	Cause      error  // the underlying error
+	Details    any    `json:"details,omitempty"`
+	StatusCode int    `json:"status_code,omitempty"`
 }
 
 func NewError(code int64, message string, cause error, details any) *Error {
@@ -14,6 +15,11 @@ func NewError(code int64, message string, cause error, details any) *Error {
 		Cause:   cause,
 		Details: details,
 	}
+}
+
+func (e *Error) WithStatusCode(statusCode int) *Error {
+	e.StatusCode = statusCode
+	return e
 }
 
 func (e *Error) Error() string {
@@ -34,4 +40,8 @@ func (e *Error) Unwrap() error {
 
 func (e *Error) GetDetails() any {
 	return e.Details
+}
+
+func (e *Error) GetStatusCode() int {
+	return e.StatusCode
 }
