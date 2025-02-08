@@ -65,6 +65,8 @@ func NewRequestError(code int64, message string, cause error, details any, optio
 	return e
 }
 
+func (e *)
+
 func (e *RequestError) Error() string {
 	return e.baseErr.Error()
 }
