@@ -7,8 +7,8 @@ type Error struct {
 	Details any    `json:"details,omitempty"`
 }
 
-func NewError(code int64, message string, cause error, details any) Error {
-	return Error{
+func NewError(code int64, message string, cause error, details any) *Error {
+	return &Error{
 		Code:    code,
 		Message: message,
 		Cause:   cause,
