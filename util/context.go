@@ -11,11 +11,11 @@ const (
 	CorrelationIdKey ContextKey = "CorrelationId"
 )
 
-func valueToCtx[T any](ctx context.Context, key ContextKey, value T) context.Context {
+func ValueToCtx[T any](ctx context.Context, key ContextKey, value T) context.Context {
 	return context.WithValue(ctx, key, value)
 }
 
-func valueFromCtx[T any](ctx context.Context, key ContextKey) (T, error) {
+func ValueFromCtx[T any](ctx context.Context, key ContextKey) (T, error) {
 	valueFromCtx := ctx.Value(key)
 	if valueFromCtx == nil {
 		return *new(T), NewUtilError(ErrCodeValueNotFoundInContext, fmt.Sprintf("%v not found in context", key), nil, nil)
@@ -28,11 +28,11 @@ func valueFromCtx[T any](ctx context.Context, key ContextKey) (T, error) {
 }
 
 func CorrelationIdToCtx(ctx context.Context, correlationId string) context.Context {
-	return valueToCtx(ctx, CorrelationIdKey, correlationId)
+	return ValueToCtx(ctx, CorrelationIdKey, correlationId)
 }
 
 func CorrelationIdFromCtx(ctx context.Context) (string, error) {
-	value, err := valueFromCtx[string](ctx, CorrelationIdKey)
+	value, err := ValueFromCtx[string](ctx, CorrelationIdKey)
 	if err != nil {
 		return "", err
 	}
