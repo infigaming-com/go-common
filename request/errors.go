@@ -19,6 +19,7 @@ const (
 	ErrCodeFailedToCreateRequest
 	ErrCodeFailedToSignRequest
 	ErrCodeFailedToSendRequest
+	ErrCodeRequestTimeout
 	ErrCodeFailedToReadResponseBody
 )
 

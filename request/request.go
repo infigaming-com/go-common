@@ -234,6 +234,9 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 
 	requestStart := time.Now()
 	resp, err := getHttpClient().Do(req)
+	if err == context.DeadlineExceeded {
+		return 0, nil, NewRequestError(ErrCodeRequestTimeout, "request timeout", err, nil, withMethod(method), withURL(requestUrl), withRequestBody(option.requestBody))
+	}
 	if err != nil {
 		return 0, nil, NewRequestError(ErrCodeFailedToSendRequest, "failed to send request", err, nil, withMethod(method), withURL(requestUrl), withRequestBody(option.requestBody))
 	}
