@@ -3,8 +3,6 @@ package util
 import (
 	"context"
 	"fmt"
-
-	"github.com/infigaming-com/go-common/errors"
 )
 
 type ContextKey string
@@ -20,11 +18,11 @@ func valueToCtx[T any](ctx context.Context, key ContextKey, value T) context.Con
 func valueFromCtx[T any](ctx context.Context, key ContextKey) (T, error) {
 	valueFromCtx := ctx.Value(key)
 	if valueFromCtx == nil {
-		return *new(T), errors.NewError(ErrCodeValueNotFoundInContext, fmt.Sprintf("%v not found in context", key))
+		return *new(T), NewUtilError(ErrCodeValueNotFoundInContext, fmt.Sprintf("%v not found in context", key), nil, nil)
 	}
 	value, ok := valueFromCtx.(T)
 	if !ok {
-		return *new(T), errors.NewError(ErrCodeInvalidValueInContext, fmt.Sprintf("%v is not of type %T on context", key, new(T)))
+		return *new(T), NewUtilError(ErrCodeInvalidValueInContext, fmt.Sprintf("%v is not of type %T on context", key, new(T)), nil, nil)
 	}
 	return value, nil
 }
