@@ -145,7 +145,14 @@ func WithFormEncodedBodyFromJson(requestBody any) Option {
 
 		values := url.Values{}
 		for k, v := range jsonMap {
-			values.Add(k, fmt.Sprintf("%v", v))
+			if v == nil {
+				continue
+			}
+			value := fmt.Sprintf("%v", v)
+			if value == "" {
+				continue
+			}
+			values.Add(k, value)
 		}
 
 		option.requestBody = []byte(values.Encode())
