@@ -251,7 +251,7 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 	}
 
 	// sign the request
-	if option.signer != nil && option.apiKey != "" && option.apiKeySecret != "" {
+	if option.signer != nil {
 		if err := option.signer(req, option.apiKeyHeader, option.apiKey, option.signatureHeader, option.apiKeySecret); err != nil {
 			return 0, nil, NewRequestError(ErrCodeFailedToSignRequest, "failed to sign request", err, nil)
 		}
