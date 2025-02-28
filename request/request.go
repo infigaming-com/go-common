@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -125,6 +127,29 @@ func WithRequestBodyFromJson(requestBody any) Option {
 			)
 		}
 		option.requestBody = jsonBody
+		return nil
+	})
+}
+
+func WithFormEncodedBodyFromJson(requestBody any) Option {
+	return optionFunc(func(option *requestOption) error {
+		jsonData, err := json.Marshal(requestBody)
+		if err != nil {
+			return NewRequestError(ErrCodeInvalidRequestBody, "failed to marshal request body", err, nil, withRequestBody(option.requestBody))
+		}
+
+		var jsonMap map[string]interface{}
+		if err := json.Unmarshal(jsonData, &jsonMap); err != nil {
+			return NewRequestError(ErrCodeInvalidRequestBody, "failed to unmarshal to map", err, nil, withRequestBody(option.requestBody))
+		}
+
+		values := url.Values{}
+		for k, v := range jsonMap {
+			values.Add(k, fmt.Sprintf("%v", v))
+		}
+
+		option.requestBody = []byte(values.Encode())
+
 		return nil
 	})
 }
@@ -279,5 +304,11 @@ func Post(ctx context.Context, requestUrl string, requestBody []byte, options ..
 func PostJson(ctx context.Context, requestUrl string, v any, options ...Option) (httpStatusCode int, responseBody []byte, err error) {
 	defaultHeader := map[string]string{"Content-Type": "application/json"}
 	options = append(options, WithRequestHeaders(defaultHeader), WithRequestBodyFromJson(v))
+	return Request(ctx, http.MethodPost, requestUrl, options...)
+}
+
+func PostFormEncoded(ctx context.Context, requestUrl string, v any, options ...Option) (httpStatusCode int, responseBody []byte, err error) {
+	defaultHeader := map[string]string{"Content-Type": "application/x-www-form-urlencoded"}
+	options = append(options, WithRequestHeaders(defaultHeader), WithFormEncodedBodyFromJson(v))
 	return Request(ctx, http.MethodPost, requestUrl, options...)
 }
