@@ -21,6 +21,7 @@ const (
 	ErrCodeFailedToSendRequest
 	ErrCodeRequestTimeout
 	ErrCodeFailedToReadResponseBody
+	ErrCodeInvalidSignerKeys
 )
 
 type requestErrorOption func(*RequestError)

@@ -21,8 +21,6 @@ var (
 	once       sync.Once
 )
 
-type requestSigner func(req *http.Request, apiKeyHeader, apiKey, signatureHeader, apiKeySecret string) error
-
 type requestOption struct {
 	lg                   *zap.Logger
 	debugEnabled         bool
@@ -30,10 +28,7 @@ type requestOption struct {
 	requestHeaders       map[string]string
 	requestBody          []byte
 	signer               requestSigner
-	apiKeyHeader         string
-	apiKey               string
-	signatureHeader      string
-	apiKeySecret         string
+	signerKeys           any
 	correlationIdKey     string
 	correlationId        string
 	slowRequestThreshold time.Duration
@@ -57,10 +52,7 @@ func defaultRequestOption() *requestOption {
 		requestHeaders:       make(map[string]string),
 		requestBody:          nil,
 		signer:               nil,
-		apiKeyHeader:         ApiKeyHeader,
-		apiKey:               "",
-		signatureHeader:      SignatureHeader,
-		apiKeySecret:         "",
+		signerKeys:           nil,
 		correlationIdKey:     "X-Correlation-ID",
 		correlationId:        "",
 		slowRequestThreshold: 3 * time.Second,
@@ -161,13 +153,10 @@ func WithFormEncodedBodyFromJson(requestBody any) Option {
 	})
 }
 
-func WithRequestSigner(requestSigner requestSigner, apiKeyHeader, apiKey, signatureHeader, apiKeySecret string) Option {
+func WithRequestSigner(requestSigner requestSigner, signerKeys any) Option {
 	return optionFunc(func(option *requestOption) error {
 		option.signer = requestSigner
-		option.apiKeyHeader = apiKeyHeader
-		option.apiKey = apiKey
-		option.signatureHeader = signatureHeader
-		option.apiKeySecret = apiKeySecret
+		option.signerKeys = signerKeys
 		return nil
 	})
 }
@@ -259,7 +248,7 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 
 	// sign the request
 	if option.signer != nil {
-		if err := option.signer(req, option.apiKeyHeader, option.apiKey, option.signatureHeader, option.apiKeySecret); err != nil {
+		if err := option.signer(req, option.signerKeys); err != nil {
 			return 0, nil, NewRequestError(ErrCodeFailedToSignRequest, "failed to sign request", err, nil)
 		}
 	}

@@ -3,6 +3,7 @@ module github.com/infigaming-com/go-common
 go 1.23.6
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.10.0
 	go.uber.org/zap v1.27.0
