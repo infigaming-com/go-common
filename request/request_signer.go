@@ -95,7 +95,7 @@ func HmacSha256Signer(req *http.Request, keys any) error {
 	return nil
 }
 
-func Md5WithSecretSigner(req *http.Request, keys any) error {
+func Md5Signer(req *http.Request, keys any) error {
 	md5SignerKeys, ok := keys.(Md5SignerKeys)
 	if !ok {
 		return NewRequestError(ErrCodeInvalidSignerKeys, "invalid signer keys", nil, keys)
