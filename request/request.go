@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"sync"
 	"time"
 
@@ -123,32 +121,14 @@ func WithRequestBodyFromJson(requestBody any) Option {
 	})
 }
 
-func WithFormEncodedBodyFromJson(requestBody any) Option {
+func WithJsonAsQueryParamsAndRequestBody(requestBody any) Option {
 	return optionFunc(func(option *requestOption) error {
-		jsonData, err := json.Marshal(requestBody)
+		queryParams, requestBody, err := generateRequestData(requestBody)
 		if err != nil {
-			return NewRequestError(ErrCodeInvalidRequestBody, "failed to marshal request body", err, nil, withRequestBody(option.requestBody))
+			return NewRequestError(ErrCodeInvalidRequestBody, "failed to generate request data", err, nil, withRequestBody(option.requestBody))
 		}
-
-		var jsonMap map[string]interface{}
-		if err := json.Unmarshal(jsonData, &jsonMap); err != nil {
-			return NewRequestError(ErrCodeInvalidRequestBody, "failed to unmarshal to map", err, nil, withRequestBody(option.requestBody))
-		}
-
-		values := url.Values{}
-		for k, v := range jsonMap {
-			if v == nil {
-				continue
-			}
-			value := fmt.Sprintf("%v", v)
-			if value == "" {
-				continue
-			}
-			values.Add(k, value)
-		}
-
-		option.requestBody = []byte(values.Encode())
-
+		option.queryParams = queryParams
+		option.requestBody = requestBody
 		return nil
 	})
 }
@@ -220,6 +200,19 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 		}
 	}()
 
+	// sign the request
+	if option.signer != nil {
+		if err := option.signer(requestSigningData{
+			method:         method,
+			url:            requestUrl,
+			queryParams:    option.queryParams,
+			requestHeaders: option.requestHeaders,
+			requestBody:    option.requestBody,
+		}, option.signerKeys); err != nil {
+			return 0, nil, NewRequestError(ErrCodeFailedToSignRequest, "failed to sign request", err, nil)
+		}
+	}
+
 	req, err := http.NewRequestWithContext(ctx, method, requestUrl, bytes.NewReader(option.requestBody))
 	if err != nil {
 		return 0, nil, NewRequestError(ErrCodeFailedToCreateRequest, "failed to create request", err, nil, withURL(requestUrl), withMethod(method), withRequestBody(option.requestBody))
@@ -231,26 +224,19 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 	}
 	req.URL.RawQuery = query.Encode()
 
-	var correlationId string
 	if option.correlationIdKey != "" && option.correlationId != "" {
 		req.Header.Add(option.correlationIdKey, option.correlationId)
 	} else {
-		correlationId, err = util.CorrelationIdFromCtx(ctx)
-		if err != nil {
+		if correlationId, correlationIdErr := util.CorrelationIdFromCtx(ctx); correlationIdErr == nil {
+			req.Header.Add(option.correlationIdKey, correlationId)
+		} else {
 			correlationId = uuid.New().String()
+			req.Header.Add(option.correlationIdKey, correlationId)
 		}
-		req.Header.Add(option.correlationIdKey, correlationId)
 	}
 
 	for k, v := range option.requestHeaders {
 		req.Header.Add(k, v)
-	}
-
-	// sign the request
-	if option.signer != nil {
-		if err := option.signer(req, option.signerKeys); err != nil {
-			return 0, nil, NewRequestError(ErrCodeFailedToSignRequest, "failed to sign request", err, nil)
-		}
 	}
 
 	requestStart := time.Now()
@@ -299,12 +285,6 @@ func Post(ctx context.Context, requestUrl string, requestBody []byte, options ..
 
 func PostJson(ctx context.Context, requestUrl string, v any, options ...Option) (httpStatusCode int, responseBody []byte, err error) {
 	defaultHeader := map[string]string{"Content-Type": "application/json"}
-	options = append(options, WithRequestHeaders(defaultHeader), WithRequestBodyFromJson(v))
-	return Request(ctx, http.MethodPost, requestUrl, options...)
-}
-
-func PostFormEncoded(ctx context.Context, requestUrl string, v any, options ...Option) (httpStatusCode int, responseBody []byte, err error) {
-	defaultHeader := map[string]string{"Content-Type": "application/x-www-form-urlencoded"}
-	options = append(options, WithRequestHeaders(defaultHeader), WithFormEncodedBodyFromJson(v))
+	options = append(options, WithRequestHeaders(defaultHeader), WithJsonAsQueryParamsAndRequestBody(v))
 	return Request(ctx, http.MethodPost, requestUrl, options...)
 }

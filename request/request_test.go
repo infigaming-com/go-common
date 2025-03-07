@@ -25,7 +25,12 @@ func TestRequestWithDebugEnabled(t *testing.T) {
 		http.MethodGet,
 		"https://httpbin.org/get",
 		WithDebugEnabled(true),
-		WithRequestSigner(HmacSha256Signer, "X-API-KEY", "test-api-key", "X-SIGNATURE", "test-api-key-secret"),
+		WithRequestSigner(HmacSha256Signer, HmacSha256SignerKeys{
+			ApiKeyHeader:    "X-API-KEY",
+			SignatureHeader: "X-SIGNATURE",
+			ApiKey:          "test-api-key",
+			ApiKeySecret:    "test-api-key-secret",
+		}),
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, statusCode)
@@ -42,7 +47,12 @@ func TestRequestWithHttpGetAndRequestSigner(t *testing.T) {
 			"Key-A": "Value-A",
 			"Key-B": "Value-B",
 		}),
-		WithRequestSigner(HmacSha256Signer, "X-API-KEY", "test-api-key", "X-SIGNATURE", "test-api-key-secret"),
+		WithRequestSigner(HmacSha256Signer, HmacSha256SignerKeys{
+			ApiKeyHeader:    "X-API-KEY",
+			SignatureHeader: "X-SIGNATURE",
+			ApiKey:          "test-api-key",
+			ApiKeySecret:    "test-api-key-secret",
+		}),
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, statusCode)
@@ -56,28 +66,36 @@ func TestRequestWithHttpPostAndRequestSigner(t *testing.T) {
 		"https://httpbin.org/post",
 		WithDebugEnabled(true),
 		WithRequestBody([]byte(`{"Key-A": "Value-A", "Key-B": "Value-B"}`)),
-		WithRequestSigner(HmacSha256Signer, "X-API-KEY", "test-api-key", "X-SIGNATURE", "test-api-key-secret"),
+		WithRequestSigner(HmacSha256Signer, HmacSha256SignerKeys{
+			ApiKeyHeader:    "X-API-KEY",
+			SignatureHeader: "X-SIGNATURE",
+			ApiKey:          "test-api-key",
+			ApiKeySecret:    "test-api-key-secret",
+		}),
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, statusCode)
 	assert.NotEmpty(t, responseBody)
 }
 
-func TestRequestWithHttpPostFormEncodedAndRequestSigner(t *testing.T) {
+func TestRequestWithQueryParamsAndRequestSigner(t *testing.T) {
 	statusCode, responseBody, err := Request(
 		context.Background(),
 		http.MethodPost,
 		"https://httpbin.org/post",
 		WithDebugEnabled(true),
-		WithRequestBody([]byte(`{"Key-A": "Value-A", "Key-B": "Value-B"}`)),
-		WithRequestSigner(Md5WithSecretSigner, "X-API-KEY", "test-api-key", "X-SIGNATURE", "test-api-key-secret"),
+		WithQueryParams(map[string]string{
+			"Key-A": "Value-A",
+			"Key-B": "Value-B",
+		}),
+		WithRequestSigner(Md5QueryParametersSigner, Md5SignerKeys{Secret: "1234567890ABCDEFGH"}),
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, statusCode)
 	assert.NotEmpty(t, responseBody)
 }
 
-func TestPostFormEncoded(t *testing.T) {
+func TestPostWithQueryParams(t *testing.T) {
 	request := struct {
 		SecureLogin      string `json:"secureLogin"`
 		Symbol           string `json:"symbol"`
@@ -98,7 +116,7 @@ func TestPostFormEncoded(t *testing.T) {
 		"https://httpbin.org/post",
 		request,
 		WithDebugEnabled(true),
-		WithRequestSigner(Md5WithSecretSigner, "X-API-KEY", "test-api-key", "X-SIGNATURE", "DbE85696Ba774014"),
+		WithRequestSigner(Md5QueryParametersSigner, Md5SignerKeys{Secret: "1234567890ABCDEFGH"}),
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, statusCode)

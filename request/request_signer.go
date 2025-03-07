@@ -8,8 +8,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 
@@ -17,7 +15,15 @@ import (
 	"github.com/infigaming-com/go-common/util"
 )
 
-type requestSigner func(req *http.Request, keys any) error
+type requestSigner func(requestSigningData requestSigningData, keys any) error
+
+type requestSigningData struct {
+	method         string
+	url            string
+	queryParams    map[string]string
+	requestHeaders map[string]string
+	requestBody    []byte
+}
 
 type HmacSha256SignerKeys struct {
 	ApiKeyHeader    string
@@ -37,17 +43,12 @@ type JwtSignerKeys struct {
 	PrivateKey      string
 }
 
-const (
-	ApiKeyHeader    = "X-API-KEY"
-	SignatureHeader = "X-SIGNATURE"
-)
-
-func getCanonicalizedMessage(req *http.Request) []byte {
-	if req.Method == http.MethodGet {
-		queryParams := req.URL.Query()
+func getHmacSha256SignerCanonicalizedMessage(requestSigningData requestSigningData) []byte {
+	if requestSigningData.method == http.MethodGet {
+		queryParams := requestSigningData.queryParams
 		var formattedParams bytes.Buffer
 		for key, value := range queryParams {
-			formattedParams.WriteString(key + "=" + value[0] + "&")
+			formattedParams.WriteString(key + "=" + value + "&")
 		}
 		if formattedParams.Len() > 0 {
 			formattedParams.Truncate(formattedParams.Len() - 1) // Remove the last &
@@ -55,77 +56,51 @@ func getCanonicalizedMessage(req *http.Request) []byte {
 		return formattedParams.Bytes()
 	}
 
-	var requestBody []byte
-	if req.Body != nil {
-		requestBody, _ = io.ReadAll(req.Body)
-		req.Body = io.NopCloser(bytes.NewBuffer(requestBody))
-	}
-
-	return requestBody
+	return requestSigningData.requestBody
 }
 
-func getFormEncodedCanonicalizedMessage(req *http.Request) []byte {
-	var requestBody []byte
-	if req.Body != nil {
-		requestBody, _ = io.ReadAll(req.Body)
-		req.Body = io.NopCloser(bytes.NewBuffer(requestBody))
+func HmacSha256Signer(requestSigningData requestSigningData, keys any) error {
+	hmacSha256SignerKeys, ok := keys.(HmacSha256SignerKeys)
+	if !ok {
+		return NewRequestError(ErrCodeInvalidSignerKeys, "invalid signer keys", nil, keys)
 	}
+	canonicalizedMessage := getHmacSha256SignerCanonicalizedMessage(requestSigningData)
+	requestSigningData.requestHeaders[hmacSha256SignerKeys.ApiKeyHeader] = hmacSha256SignerKeys.ApiKey
+	signature := util.HmacSha256Hash(canonicalizedMessage, []byte(hmacSha256SignerKeys.ApiKeySecret))
+	requestSigningData.requestHeaders[hmacSha256SignerKeys.SignatureHeader] = hex.EncodeToString(signature)
+	return nil
+}
 
-	if len(requestBody) == 0 {
-		return []byte{}
-	}
-
-	values, err := url.ParseQuery(string(requestBody))
-	if err != nil {
-		return []byte{}
+func getMd5QueryParametersSignerCanonicalizedMessage(requestSigningData requestSigningData) []byte {
+	// Create url.Values from queryParams map
+	values := url.Values{}
+	for key, value := range requestSigningData.queryParams {
+		values.Set(key, value)
 	}
 
 	return []byte(values.Encode())
 }
 
-func HmacSha256Signer(req *http.Request, keys any) error {
-	hmacSha256SignerKeys, ok := keys.(HmacSha256SignerKeys)
-	if !ok {
-		return NewRequestError(ErrCodeInvalidSignerKeys, "invalid signer keys", nil, keys)
-	}
-	canonicalizedMessage := getCanonicalizedMessage(req)
-	req.Header.Add(hmacSha256SignerKeys.ApiKeyHeader, hmacSha256SignerKeys.ApiKey)
-	signature := util.HmacSha256Hash(canonicalizedMessage, []byte(hmacSha256SignerKeys.ApiKeySecret))
-	req.Header.Add(hmacSha256SignerKeys.SignatureHeader, hex.EncodeToString(signature))
-	return nil
-}
-
-func Md5Signer(req *http.Request, keys any) error {
+func Md5QueryParametersSigner(requestSigningData requestSigningData, keys any) error {
 	md5SignerKeys, ok := keys.(Md5SignerKeys)
 	if !ok {
 		return NewRequestError(ErrCodeInvalidSignerKeys, "invalid signer keys", nil, keys)
 	}
-	canonicalizedMessage := getFormEncodedCanonicalizedMessage(req)
+	canonicalizedMessage := getMd5QueryParametersSignerCanonicalizedMessage(requestSigningData)
 	messageWithSecret := append(canonicalizedMessage, []byte(md5SignerKeys.Secret)...)
 	hash := md5.Sum(messageWithSecret)
 	hashHex := hex.EncodeToString(hash[:])
 
-	var formValues url.Values
-	if len(canonicalizedMessage) > 0 {
-		var err error
-		formValues, err = url.ParseQuery(string(canonicalizedMessage))
-		if err != nil {
-			return fmt.Errorf("failed to parse form data: %w", err)
-		}
-	} else {
-		formValues = url.Values{}
+	// Add hash to query parameters instead of body
+	if requestSigningData.queryParams == nil {
+		requestSigningData.queryParams = make(map[string]string)
 	}
-
-	formValues.Set("hash", hashHex)
-
-	newBody := formValues.Encode()
-	req.Body = io.NopCloser(bytes.NewBufferString(newBody))
-	req.ContentLength = int64(len(newBody))
+	requestSigningData.queryParams["hash"] = hashHex
 
 	return nil
 }
 
-func JwtSigner(req *http.Request, keys any) error {
+func JwtSigner(requestSigningData requestSigningData, keys any) error {
 	jwtSignerKeys, ok := keys.(JwtSignerKeys)
 	if !ok {
 		return NewRequestError(ErrCodeInvalidSignerKeys, "invalid signer keys", nil, keys)
@@ -146,14 +121,8 @@ func JwtSigner(req *http.Request, keys any) error {
 		return NewRequestError(ErrCodeInvalidSignerKeys, "invalid private key", nil, jwtSignerKeys)
 	}
 
-	var requestBody []byte
-	if req.Body != nil {
-		requestBody, _ = io.ReadAll(req.Body)
-		req.Body = io.NopCloser(bytes.NewBuffer(requestBody))
-	}
-
 	var claims jwt.MapClaims
-	if err := json.Unmarshal(requestBody, &claims); err != nil {
+	if err := json.Unmarshal(requestSigningData.requestBody, &claims); err != nil {
 		return NewRequestError(ErrCodeInvalidRequestBody, "invalid request body", err, jwtSignerKeys)
 	}
 
@@ -163,8 +132,8 @@ func JwtSigner(req *http.Request, keys any) error {
 		return NewRequestError(ErrCodeInvalidRequestBody, "invalid request body", err, jwtSignerKeys)
 	}
 
-	req.Header.Add(jwtSignerKeys.ApiKeyHeader, jwtSignerKeys.ApiKey)
-	req.Header.Add(jwtSignerKeys.SignatureHeader, tokenString)
+	requestSigningData.requestHeaders[jwtSignerKeys.ApiKeyHeader] = jwtSignerKeys.ApiKey
+	requestSigningData.requestHeaders[jwtSignerKeys.SignatureHeader] = tokenString
 
 	return nil
 }

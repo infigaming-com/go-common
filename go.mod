@@ -1,6 +1,6 @@
 module github.com/infigaming-com/go-common
 
-go 1.23.6
+go 1.23.7
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.2.1
