@@ -49,16 +49,16 @@ func WithExcludePaths(excludePaths []string) LoggingMiddlewareOption {
 	}
 }
 
-func LoggingMiddleware(opts ...LoggingMiddlewareOption) gin.HandlerFunc {
-	cfg := &loggingMiddlewareOptions{
+func defaultLoggingMiddlewareOptions() *loggingMiddlewareOptions {
+	return &loggingMiddlewareOptions{
 		lg:           zap.L(),
-		debugEnabled: false,
+		debugEnabled: true,
 		msgArchiver:  nil,
-		excludePaths: []string{
-			"/",
-			"/healthcheck",
-		},
 	}
+}
+
+func LoggingMiddleware(opts ...LoggingMiddlewareOption) gin.HandlerFunc {
+	cfg := defaultLoggingMiddlewareOptions()
 
 	for _, opt := range opts {
 		opt(cfg)
