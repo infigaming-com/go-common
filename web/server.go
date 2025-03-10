@@ -112,3 +112,7 @@ func defaultHandler() gin.HandlerFunc {
 		}
 	}
 }
+
+func (s *Server) Engine() *gin.Engine {
+	return s.engine
+}
