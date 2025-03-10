@@ -15,6 +15,7 @@ import (
 )
 
 type Server struct {
+	lg     *zap.Logger
 	engine *gin.Engine
 	mode   string
 	port   int64
@@ -24,8 +25,15 @@ type Option func(*Server)
 
 func defaultServer() *Server {
 	return &Server{
+		lg:   zap.L(),
 		mode: gin.ReleaseMode,
 		port: 8080,
+	}
+}
+
+func WithLogger(lg *zap.Logger) Option {
+	return func(s *Server) {
+		s.lg = lg
 	}
 }
 
@@ -47,7 +55,7 @@ func WithCustomHandler(handler func(c *gin.Context)) Option {
 	}
 }
 
-func StartServer(lg *zap.Logger, opts ...Option) {
+func StartServer(opts ...Option) {
 	s := defaultServer()
 
 	gin.SetMode(s.mode)
@@ -68,28 +76,28 @@ func StartServer(lg *zap.Logger, opts ...Option) {
 
 	go func() {
 		addr := fmt.Sprintf(":%d", s.port)
-		lg.Info("starting web server ...", zap.String("address", addr))
+		s.lg.Info("starting web server ...", zap.String("address", addr))
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			lg.Fatal("fail to listenAndServe", zap.Error(err))
+			s.lg.Fatal("fail to listenAndServe", zap.Error(err))
 		}
 	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	lg.Info("shutdown web server ...")
+	s.lg.Info("shutdown web server ...")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
-		lg.Fatal("fail to shutdown web server", zap.Error(err))
+		s.lg.Fatal("fail to shutdown web server", zap.Error(err))
 	}
 
 	select {
 	case <-ctx.Done():
-		lg.Info("web server shutdown timeout")
+		s.lg.Info("web server shutdown timeout")
 	}
-	lg.Info("web server exiting")
+	s.lg.Info("web server exiting")
 }
 
 func defaultHandler() gin.HandlerFunc {
