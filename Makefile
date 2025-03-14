@@ -37,3 +37,7 @@ all-upgrade:
 	@$(GO) get -u ./...
 	@$(GO) mod tidy
 	@echo "Go version and dependencies updated successfully!"
+
+.PHONY: build-all
+build-all:
+	@$(GO) build ./...
