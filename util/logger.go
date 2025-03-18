@@ -20,8 +20,11 @@ func initLogger() (*zap.Logger, error) {
 	zapCfg.Level = zap.NewAtomicLevelAt(zapcore.Level(logLevelInt))
 	zapCfg.EncoderConfig.CallerKey = "ln"
 	zapCfg.EncoderConfig.FunctionKey = "fn"
-	zapCfg.EncoderConfig.LevelKey = "lv"
+	zapCfg.EncoderConfig.LevelKey = "severity"
+	zapCfg.EncoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
 	zapCfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	zapCfg.OutputPaths = []string{"stdout"}
+
 	logger, err := zapCfg.Build()
 	if err != nil {
 		return nil, err
