@@ -46,6 +46,10 @@ func (c *redisCache) Set(ctx context.Context, key string, value string, expiry t
 	return c.client.Set(ctx, key, value, expiry).Err()
 }
 
+func (c *redisCache) SetNX(ctx context.Context, key string, value string, expiry time.Duration) (bool, error) {
+	return c.client.SetNX(ctx, key, value, expiry).Result()
+}
+
 func (c *redisCache) Get(ctx context.Context, key string) (string, error) {
 	data, err := c.client.Get(ctx, key).Result()
 	if err != nil {

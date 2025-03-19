@@ -8,6 +8,7 @@ import (
 
 type Cache interface {
 	Set(ctx context.Context, key string, value string, expiry time.Duration) error
+	SetNX(ctx context.Context, key string, value string, expiry time.Duration) (bool, error)
 	Get(ctx context.Context, key string) (string, error)
 	Delete(ctx context.Context, key string) error
 	Clear(ctx context.Context) error
