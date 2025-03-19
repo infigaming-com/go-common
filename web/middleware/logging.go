@@ -8,10 +8,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	common_util "github.com/infigaming-com/go-common/util"
 	"github.com/samber/lo"
 	"go.uber.org/zap"
-
-	common_util "github.com/infigaming-com/go-common/util"
 )
 
 type MsgArchiver func(ctx context.Context, correlationId string, url string, msg map[string]any)
