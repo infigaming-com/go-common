@@ -14,7 +14,7 @@ type Cache interface {
 	Clear(ctx context.Context) error
 }
 
-func CacheSetTyped[T any](ctx context.Context, cache Cache, key string, value T, expiry time.Duration) error {
+func SetTyped[T any](ctx context.Context, cache Cache, key string, value T, expiry time.Duration) error {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return ErrJsonMarshal
@@ -23,7 +23,7 @@ func CacheSetTyped[T any](ctx context.Context, cache Cache, key string, value T,
 	return cache.Set(ctx, key, string(data), expiry)
 }
 
-func CacheGetTyped[T any](ctx context.Context, cache Cache, key string) (T, error) {
+func GetTyped[T any](ctx context.Context, cache Cache, key string) (T, error) {
 	var result T
 
 	value, err := cache.Get(ctx, key)
@@ -38,10 +38,10 @@ func CacheGetTyped[T any](ctx context.Context, cache Cache, key string) (T, erro
 	return result, nil
 }
 
-func CacheDelete(ctx context.Context, cache Cache, key string) error {
+func Delete(ctx context.Context, cache Cache, key string) error {
 	return cache.Delete(ctx, key)
 }
 
-func CacheClear(ctx context.Context, cache Cache) error {
+func Clear(ctx context.Context, cache Cache) error {
 	return cache.Clear(ctx)
 }

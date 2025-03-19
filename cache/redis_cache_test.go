@@ -54,17 +54,17 @@ func TestRedisCacheCurrencySetAndGet(t *testing.T) {
 		DecimalPlaces: 2,
 	}
 
-	err = CacheSetTyped(context.Background(), cache, currency.Key(), currency.Value(), 60*time.Second)
+	err = SetTyped(context.Background(), cache, currency.Key(), currency.Value(), 60*time.Second)
 	assert.NoError(t, err)
 
 	time.Sleep(1 * time.Second)
-	value, err := CacheGetTyped[CurrencyValue](context.Background(), cache, currency.Key())
+	value, err := GetTyped[CurrencyValue](context.Background(), cache, currency.Key())
 	assert.NoError(t, err)
 	assert.Equal(t, currency.DecimalPlaces, value.DecimalPlaces)
 
-	err = CacheDelete(context.Background(), cache, currency.Key())
+	err = Delete(context.Background(), cache, currency.Key())
 	assert.NoError(t, err)
 
-	value, err = CacheGetTyped[CurrencyValue](context.Background(), cache, currency.Key())
+	value, err = GetTyped[CurrencyValue](context.Background(), cache, currency.Key())
 	assert.ErrorIs(t, err, ErrKeyNotFound)
 }
