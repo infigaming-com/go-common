@@ -23,6 +23,15 @@ func SetTyped[T any](ctx context.Context, cache Cache, key string, value T, expi
 	return cache.Set(ctx, key, string(data), expiry)
 }
 
+func SetNXTyped[T any](ctx context.Context, cache Cache, key string, value T, expiry time.Duration) (bool, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return false, ErrJsonMarshal
+	}
+
+	return cache.SetNX(ctx, key, string(data), expiry)
+}
+
 func GetTyped[T any](ctx context.Context, cache Cache, key string) (T, error) {
 	var result T
 
