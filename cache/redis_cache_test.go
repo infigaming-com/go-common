@@ -68,3 +68,48 @@ func TestRedisCacheCurrencySetAndGet(t *testing.T) {
 	value, err = GetTyped[CurrencyValue](context.Background(), cache, currency.Key())
 	assert.ErrorIs(t, err, ErrKeyNotFound)
 }
+
+func TestRedisCacheCurrencySetsAndGets(t *testing.T) {
+	lg, err := zap.NewDevelopment()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cache, close := NewRedisCache(lg, &RedisCacheConfig{
+		Addr:           "localhost:6379",
+		DB:             15,
+		ConnectTimeout: 5,
+	})
+	defer close()
+
+	currency1 := &Currency{
+		LineName:      "test_line_name",
+		Currency:      "USD",
+		DecimalPlaces: 2,
+	}
+	currency2 := &Currency{
+		LineName:      "test_line_name",
+		Currency:      "EUR",
+		DecimalPlaces: 2,
+	}
+
+	err = SetsTyped(context.Background(), cache, map[string]CurrencyValue{
+		currency1.Key(): currency1.Value(),
+		currency2.Key(): currency2.Value(),
+	}, 60*time.Second)
+	assert.NoError(t, err)
+
+	time.Sleep(1 * time.Second)
+
+	values, err := GetsTyped[CurrencyValue](context.Background(), cache, []string{currency1.Key(), currency2.Key()})
+	assert.NoError(t, err)
+	assert.Equal(t, currency1.Value(), values[currency1.Key()])
+	assert.Equal(t, currency2.Value(), values[currency2.Key()])
+
+	err = Delete(context.Background(), cache, currency1.Key())
+	assert.NoError(t, err)
+
+	values, err = GetsTyped[CurrencyValue](context.Background(), cache, []string{currency1.Key(), currency2.Key()})
+	assert.NoError(t, err)
+	assert.Equal(t, currency2.Value(), values[currency2.Key()])
+}

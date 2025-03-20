@@ -119,17 +119,21 @@ func (c *redisCache) Gets(ctx context.Context, keys []string) (map[string]string
 	}
 
 	cmds, err := pipe.Exec(ctx)
-	if err != nil {
+	if err != nil && err != redis.Nil {
 		return results, fmt.Errorf("failed to execute pipeline: %w", err)
 	}
 
 	for i, cmd := range cmds {
-		if cmd.Err() == nil {
-			if strCmd, ok := cmd.(*redis.StringCmd); ok {
-				value, err := strCmd.Result()
-				if err == nil {
-					results[keys[i]] = value
-				}
+		if cmd.Err() == redis.Nil {
+			continue
+		}
+		if cmd.Err() != nil {
+			continue
+		}
+		if strCmd, ok := cmd.(*redis.StringCmd); ok {
+			value, err := strCmd.Result()
+			if err == nil {
+				results[keys[i]] = value
 			}
 		}
 	}
