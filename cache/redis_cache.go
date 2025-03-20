@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -60,6 +61,80 @@ func (c *redisCache) Get(ctx context.Context, key string) (string, error) {
 	}
 
 	return data, nil
+}
+
+func (c *redisCache) Sets(ctx context.Context, kvs map[string]string, expiry time.Duration) error {
+	pipe := c.client.Pipeline()
+
+	for key, value := range kvs {
+		pipe.Set(ctx, key, value, expiry)
+	}
+
+	cmds, err := pipe.Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to execute pipeline: %w", err)
+	}
+
+	for i, cmd := range cmds {
+		if cmd.Err() != nil {
+			return fmt.Errorf("failed to set item %d: %w", i, cmd.Err())
+		}
+	}
+
+	return nil
+}
+
+func (c *redisCache) SetsNX(ctx context.Context, kvs map[string]string, expiry time.Duration) (map[string]bool, error) {
+	results := make(map[string]bool, len(kvs))
+	pipe := c.client.Pipeline()
+
+	cmds := make(map[string]*redis.BoolCmd, len(kvs))
+	for key, value := range kvs {
+		cmds[key] = pipe.SetNX(ctx, key, value, expiry)
+	}
+
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		return results, fmt.Errorf("failed to execute pipeline: %w", err)
+	}
+
+	for key, cmd := range cmds {
+		success, err := cmd.Result()
+		if err != nil {
+			return results, fmt.Errorf("failed to get result for key %s: %w", key, err)
+		}
+		results[key] = success
+	}
+
+	return results, nil
+}
+
+func (c *redisCache) Gets(ctx context.Context, keys []string) (map[string]string, error) {
+	results := make(map[string]string)
+
+	pipe := c.client.Pipeline()
+
+	for _, key := range keys {
+		pipe.Get(ctx, key)
+	}
+
+	cmds, err := pipe.Exec(ctx)
+	if err != nil {
+		return results, fmt.Errorf("failed to execute pipeline: %w", err)
+	}
+
+	for i, cmd := range cmds {
+		if cmd.Err() == nil {
+			if strCmd, ok := cmd.(*redis.StringCmd); ok {
+				value, err := strCmd.Result()
+				if err == nil {
+					results[keys[i]] = value
+				}
+			}
+		}
+	}
+
+	return results, nil
 }
 
 func (c *redisCache) Delete(ctx context.Context, key string) error {
