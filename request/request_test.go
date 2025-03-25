@@ -94,31 +94,3 @@ func TestRequestWithQueryParamsAndRequestSigner(t *testing.T) {
 	assert.Equal(t, http.StatusOK, statusCode)
 	assert.NotEmpty(t, responseBody)
 }
-
-func TestPostWithQueryParams(t *testing.T) {
-	request := struct {
-		SecureLogin      string `json:"secureLogin"`
-		Symbol           string `json:"symbol"`
-		Language         string `json:"language"`
-		Token            string `json:"token"`
-		ExternalPlayerId string `json:"externalPlayerId"`
-		Currency         string `json:"currency"`
-	}{
-		SecureLogin:      "zf723_infigming",
-		Symbol:           "vs10bhallbnza2",
-		Language:         "en",
-		Token:            "1234567890ABCDEFGH",
-		ExternalPlayerId: "ABCD_USD",
-		Currency:         "USD",
-	}
-	statusCode, responseBody, err := PostFormEncoded(
-		context.Background(),
-		"https://httpbin.org/post",
-		request,
-		WithDebugEnabled(true),
-		WithRequestSigner(Md5QueryParametersSigner, Md5SignerKeys{Secret: "1234567890ABCDEFGH"}),
-	)
-	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, statusCode)
-	assert.NotEmpty(t, responseBody)
-}

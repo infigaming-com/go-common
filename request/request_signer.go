@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 
@@ -62,7 +63,7 @@ func getHmacSha256SignerCanonicalizedMessage(requestSigningData requestSigningDa
 func HmacSha256Signer(requestSigningData requestSigningData, keys any) error {
 	hmacSha256SignerKeys, ok := keys.(HmacSha256SignerKeys)
 	if !ok {
-		return NewRequestError(ErrCodeInvalidSignerKeys, "invalid signer keys", nil, keys)
+		return fmt.Errorf("invalid signer keys for hmac sha256 signer: %v", keys)
 	}
 	canonicalizedMessage := getHmacSha256SignerCanonicalizedMessage(requestSigningData)
 	requestSigningData.requestHeaders[hmacSha256SignerKeys.ApiKeyHeader] = hmacSha256SignerKeys.ApiKey
@@ -84,7 +85,7 @@ func getMd5QueryParametersSignerCanonicalizedMessage(requestSigningData requestS
 func Md5QueryParametersSigner(requestSigningData requestSigningData, keys any) error {
 	md5SignerKeys, ok := keys.(Md5SignerKeys)
 	if !ok {
-		return NewRequestError(ErrCodeInvalidSignerKeys, "invalid signer keys", nil, keys)
+		return fmt.Errorf("invalid signer keys for md5 query parameters signer: %v", keys)
 	}
 	canonicalizedMessage := getMd5QueryParametersSignerCanonicalizedMessage(requestSigningData)
 	messageWithSecret := append(canonicalizedMessage, []byte(md5SignerKeys.Secret)...)
@@ -103,33 +104,33 @@ func Md5QueryParametersSigner(requestSigningData requestSigningData, keys any) e
 func JwtSigner(requestSigningData requestSigningData, keys any) error {
 	jwtSignerKeys, ok := keys.(JwtSignerKeys)
 	if !ok {
-		return NewRequestError(ErrCodeInvalidSignerKeys, "invalid signer keys", nil, keys)
+		return fmt.Errorf("invalid signer keys for jwt signer: %v", keys)
 	}
 
 	base64DecodedPrivateKey, err := base64.StdEncoding.DecodeString(jwtSignerKeys.PrivateKey)
 	if err != nil {
-		return NewRequestError(ErrCodeInvalidSignerKeys, "invalid private key", err, jwtSignerKeys)
+		return fmt.Errorf("invalid private key for jwt signer: %v", err)
 	}
 
 	privateKey, err := x509.ParsePKCS8PrivateKey(base64DecodedPrivateKey)
 	if err != nil {
-		return NewRequestError(ErrCodeInvalidSignerKeys, "invalid private key", err, jwtSignerKeys)
+		return fmt.Errorf("invalid private key for jwt signer: %v", err)
 	}
 
 	rsaPrivateKey, ok := privateKey.(*rsa.PrivateKey)
 	if !ok {
-		return NewRequestError(ErrCodeInvalidSignerKeys, "invalid private key", nil, jwtSignerKeys)
+		return fmt.Errorf("invalid private key for jwt signer: %v", jwtSignerKeys)
 	}
 
 	var claims jwt.MapClaims
 	if err := json.Unmarshal(requestSigningData.requestBody, &claims); err != nil {
-		return NewRequestError(ErrCodeInvalidRequestBody, "invalid request body", err, jwtSignerKeys)
+		return fmt.Errorf("invalid request body for jwt signer: %v", err)
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	tokenString, err := token.SignedString(rsaPrivateKey)
 	if err != nil {
-		return NewRequestError(ErrCodeInvalidRequestBody, "invalid request body", err, jwtSignerKeys)
+		return fmt.Errorf("invalid request body for jwt signer: %v", err)
 	}
 
 	requestSigningData.requestHeaders[jwtSignerKeys.ApiKeyHeader] = jwtSignerKeys.ApiKey

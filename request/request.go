@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -108,13 +109,11 @@ func WithRequestBodyFromJson(requestBody any) Option {
 	return optionFunc(func(option *requestOption) error {
 		jsonBody, err := json.Marshal(requestBody)
 		if err != nil {
-			return NewRequestError(
-				ErrCodeInvalidRequestBody,
-				"failed to marshal request body",
-				err,
-				nil,
-				withRequestBody(option.requestBody),
+			option.lg.Error("[HTTP-REQUEST-ERROR: failed to marshal request body]",
+				zap.Error(err),
+				zap.Any("requestBody", requestBody),
 			)
+			return fmt.Errorf("failed to marshal request body: %w", err)
 		}
 		option.requestBody = jsonBody
 		return nil
@@ -125,7 +124,11 @@ func WithJsonAsQueryParamsAndRequestBody(requestBody any) Option {
 	return optionFunc(func(option *requestOption) error {
 		queryParams, requestBody, err := generateRequestData(requestBody)
 		if err != nil {
-			return NewRequestError(ErrCodeInvalidRequestBody, "failed to generate request data", err, nil, withRequestBody(option.requestBody))
+			option.lg.Error("[HTTP-REQUEST-ERROR: failed to generate request data]",
+				zap.Error(err),
+				zap.Any("requestBody", requestBody),
+			)
+			return fmt.Errorf("failed to generate request data: %w", err)
 		}
 		option.queryParams = queryParams
 		option.requestBody = requestBody
@@ -144,7 +147,10 @@ func WithRequestSigner(requestSigner requestSigner, signerKeys any) Option {
 func WithSlowRequestThreshold(slowRequestThreshold time.Duration) Option {
 	return optionFunc(func(option *requestOption) error {
 		if slowRequestThreshold <= 0 {
-			return NewRequestError(ErrCodeInvalidSlowRequestThreshold, "invalid slow request threshold", nil, nil)
+			option.lg.Error("[HTTP-REQUEST-ERROR: invalid slow request threshold]",
+				zap.Duration("slowRequestThreshold", slowRequestThreshold),
+			)
+			return fmt.Errorf("invalid slow request threshold: %v", slowRequestThreshold)
 		}
 		option.slowRequestThreshold = slowRequestThreshold
 		return nil
@@ -209,13 +215,27 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 			requestHeaders: option.requestHeaders,
 			requestBody:    option.requestBody,
 		}, option.signerKeys); err != nil {
-			return 0, nil, NewRequestError(ErrCodeFailedToSignRequest, "failed to sign request", err, nil)
+			option.lg.Error("[HTTP-REQUEST-ERROR: failed to sign request]",
+				zap.Error(err),
+				zap.String("method", method),
+				zap.String("url", requestUrl),
+				zap.Any("queryParams", option.queryParams),
+				zap.Any("requestHeaders", option.requestHeaders),
+				zap.ByteString("requestBody", option.requestBody),
+			)
+			return 0, nil, fmt.Errorf("failed to sign request: %w", err)
 		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, requestUrl, bytes.NewReader(option.requestBody))
 	if err != nil {
-		return 0, nil, NewRequestError(ErrCodeFailedToCreateRequest, "failed to create request", err, nil, withURL(requestUrl), withMethod(method), withRequestBody(option.requestBody))
+		option.lg.Error("[HTTP-REQUEST-ERROR: failed to create request]",
+			zap.Error(err),
+			zap.String("method", method),
+			zap.String("url", requestUrl),
+			zap.ByteString("requestBody", option.requestBody),
+		)
+		return 0, nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	query := req.URL.Query()
@@ -242,10 +262,18 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 	requestStart := time.Now()
 	resp, err := getHttpClient().Do(req)
 	if err == context.DeadlineExceeded {
-		return 0, nil, NewRequestError(ErrCodeRequestTimeout, "request timeout", err, nil, withMethod(method), withURL(requestUrl), withRequestBody(option.requestBody))
+		option.lg.Error("[HTTP-REQUEST-ERROR: request timeout]",
+			zap.Error(err),
+			zap.ByteString("requestBody", option.requestBody),
+		)
+		return 0, nil, fmt.Errorf("request timeout: %w", err)
 	}
 	if err != nil {
-		return 0, nil, NewRequestError(ErrCodeFailedToSendRequest, "failed to send request", err, nil, withMethod(method), withURL(requestUrl), withRequestBody(option.requestBody))
+		option.lg.Error("[HTTP-REQUEST-ERROR: failed to send request]",
+			zap.Error(err),
+			zap.ByteString("requestBody", option.requestBody),
+		)
+		return 0, nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 	requestDuration := time.Since(requestStart)
@@ -254,7 +282,11 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 
 	responseBody, err = io.ReadAll(resp.Body)
 	if err != nil {
-		return 0, nil, NewRequestError(ErrCodeFailedToReadResponseBody, "failed to read response body", err, nil)
+		option.lg.Error("[HTTP-REQUEST-ERROR: failed to read response body]",
+			zap.Error(err),
+			zap.ByteString("requestBody", option.requestBody),
+		)
+		return 0, nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
 	if requestDuration > option.slowRequestThreshold {
