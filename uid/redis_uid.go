@@ -2,23 +2,21 @@ package uid
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
-	"go.uber.org/zap"
 )
 
 type redisUID struct {
-	lg     *zap.Logger
 	client *redis.Client
 	name   string
 }
 
 type Options struct {
-	lg             *zap.Logger
 	addr           string
 	db             int64
 	connectTimeout time.Duration
@@ -37,18 +35,10 @@ func (f optionFunc) apply(o *Options) error {
 
 func defaultOptions() *Options {
 	return &Options{
-		lg:             zap.L(),
 		addr:           "localhost:6379",
 		db:             0,
 		connectTimeout: 5 * time.Second,
 	}
-}
-
-func WithLogger(lg *zap.Logger) Option {
-	return optionFunc(func(o *Options) error {
-		o.lg = lg
-		return nil
-	})
 }
 
 func WithAddr(addr string) Option {
@@ -79,11 +69,11 @@ func WithName(name string) Option {
 	})
 }
 
-func NewRedisUID(opts ...Option) (UID, func()) {
+func NewRedisUID(opts ...Option) (UID, func(), error) {
 	cfg := defaultOptions()
 	for _, opt := range opts {
 		if err := opt.apply(cfg); err != nil {
-			cfg.lg.Fatal("failed to apply option to redis uid", zap.Error(err))
+			return nil, nil, fmt.Errorf("failed to apply option to redis uid: %w", err)
 		}
 	}
 
@@ -96,30 +86,26 @@ func NewRedisUID(opts ...Option) (UID, func()) {
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.connectTimeout)
 	defer cancel()
 	if _, err := client.Ping(ctx).Result(); err != nil {
-		cfg.lg.Fatal("failed to connect to redis for uid", zap.String("addr", cfg.addr), zap.Int("db", int(cfg.db)), zap.Error(err))
+		return nil, nil, fmt.Errorf("failed to connect to redis for uid: %w", err)
 	}
-	cfg.lg.Info("connected to redis for uid", zap.String("addr", cfg.addr), zap.Int("db", int(cfg.db)))
+
 	return &redisUID{
-			lg:     cfg.lg,
 			client: client,
 			name:   cfg.name,
 		}, func() {
 			client.Close()
-			cfg.lg.Info("closed redis connection for uid", zap.String("addr", cfg.addr), zap.Int("db", int(cfg.db)))
-		}
+		}, nil
 }
 
 func (r *redisUID) New() (string, error) {
 	counter, err := r.client.Incr(context.Background(), getCounterKey(r.name)).Result()
 	if err != nil {
-		r.lg.Error("failed to get counter for uid", zap.String("prefix", r.name), zap.Error(err))
-		return "", err
+		return "", fmt.Errorf("failed to get counter for uid: %w", err)
 	}
 
 	uuid, err := uuid.NewV7()
 	if err != nil {
-		r.lg.Error("failed to generate uuid for uid", zap.String("name", r.name), zap.Error(err))
-		return "", err
+		return "", fmt.Errorf("failed to generate uuidv7 for uid: %w", err)
 	}
 
 	var sb strings.Builder

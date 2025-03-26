@@ -8,11 +8,9 @@ import (
 	"time"
 
 	"github.com/infigaming-com/go-common/request"
-	"go.uber.org/zap"
 )
 
 type furionRateProvider struct {
-	lg           *zap.Logger
 	url          string
 	apiKey       string
 	apiKeySecret string
@@ -23,9 +21,8 @@ type getRatesRequest struct {
 	Currencies []string `json:"currencies"`
 }
 
-func NewFurionRateProvider(lg *zap.Logger, url, apiKey, apiKeySecret string) RateProvider {
+func NewFurionRateProvider(url, apiKey, apiKeySecret string) RateProvider {
 	return &furionRateProvider{
-		lg:           lg,
 		url:          url,
 		apiKey:       apiKey,
 		apiKeySecret: apiKeySecret,

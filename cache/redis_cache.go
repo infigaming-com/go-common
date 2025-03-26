@@ -16,11 +16,10 @@ type RedisCacheConfig struct {
 }
 
 type redisCache struct {
-	lg     *zap.Logger
 	client *redis.Client
 }
 
-func NewRedisCache(lg *zap.Logger, cfg *RedisCacheConfig) (Cache, func()) {
+func NewRedisCache(lg *zap.Logger, cfg *RedisCacheConfig) (Cache, func(), error) {
 	client := redis.NewClient(&redis.Options{
 		Addr: cfg.Addr,
 		DB:   int(cfg.DB),
@@ -30,17 +29,15 @@ func NewRedisCache(lg *zap.Logger, cfg *RedisCacheConfig) (Cache, func()) {
 	defer cancel()
 	_, err := client.Ping(ctx).Result()
 	if err != nil {
-		lg.Fatal("failed to connect to redis for cache", zap.String("addr", cfg.Addr), zap.Int("db", int(cfg.DB)), zap.Error(err))
+		return nil, nil, fmt.Errorf("failed to connect to redis for cache: %w", err)
 	}
-	lg.Info("connected to redis for cache", zap.String("addr", cfg.Addr), zap.Int("db", int(cfg.DB)))
 
 	return &redisCache{
-			lg:     lg,
 			client: client,
 		}, func() {
 			client.Close()
 			lg.Info("closed redis connection for cache", zap.String("addr", cfg.Addr), zap.Int("db", int(cfg.DB)))
-		}
+		}, nil
 }
 
 func (c *redisCache) Set(ctx context.Context, key string, value string, expiry time.Duration) error {
