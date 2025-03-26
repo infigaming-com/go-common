@@ -8,23 +8,56 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-type RedisCacheConfig struct {
+type RedisCacheOptions struct {
 	Addr           string `mapstructure:"ADDR"`
 	DB             int64  `mapstructure:"DB"`
 	ConnectTimeout int64  `mapstructure:"CONNECT_TIMEOUT"`
+}
+
+type RedisCacheOption func(*RedisCacheOptions)
+
+func WithRedisCacheAddr(addr string) RedisCacheOption {
+	return func(o *RedisCacheOptions) {
+		o.Addr = addr
+	}
+}
+
+func WithRedisCacheDB(db int64) RedisCacheOption {
+	return func(o *RedisCacheOptions) {
+		o.DB = db
+	}
+}
+
+func WithRedisCacheConnectTimeout(connectTimeout int64) RedisCacheOption {
+	return func(o *RedisCacheOptions) {
+		o.ConnectTimeout = connectTimeout
+	}
+}
+
+func defaultRedisCacheOptions() *RedisCacheOptions {
+	return &RedisCacheOptions{
+		Addr:           "localhost:6379",
+		DB:             0,
+		ConnectTimeout: 30,
+	}
 }
 
 type redisCache struct {
 	client *redis.Client
 }
 
-func NewRedisCache(cfg *RedisCacheConfig) (Cache, func(), error) {
+func NewRedisCache(opts ...RedisCacheOption) (Cache, func(), error) {
+	redisCacheOptions := defaultRedisCacheOptions()
+	for _, opt := range opts {
+		opt(redisCacheOptions)
+	}
+
 	client := redis.NewClient(&redis.Options{
-		Addr: cfg.Addr,
-		DB:   int(cfg.DB),
+		Addr: redisCacheOptions.Addr,
+		DB:   int(redisCacheOptions.DB),
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.ConnectTimeout)*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(redisCacheOptions.ConnectTimeout)*time.Second)
 	defer cancel()
 	_, err := client.Ping(ctx).Result()
 	if err != nil {

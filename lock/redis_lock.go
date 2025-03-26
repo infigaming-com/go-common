@@ -11,8 +11,6 @@ import (
 	goredislib "github.com/redis/go-redis/v9"
 )
 
-const keyPrefix = "locker:"
-
 type RedisLockOptions struct {
 	Addr           string `mapstructure:"ADDR"`
 	DB             int64  `mapstructure:"DB"`
@@ -120,8 +118,7 @@ func (l *redisLock) Lock(ctx context.Context, key string, opts ...LockOption) (f
 		opt(options)
 	}
 
-	prefixedKey := keyPrefix + key
-	mutex := l.rs.NewMutex(prefixedKey,
+	mutex := l.rs.NewMutex(key,
 		redsync.WithExpiry(options.timeout),
 		redsync.WithRetryDelay(options.retryDelay),
 		redsync.WithTries(options.retries),
@@ -154,8 +151,7 @@ func (l *redisLock) TryLock(ctx context.Context, key string, opts ...LockOption)
 		opt(options)
 	}
 
-	prefixedKey := keyPrefix + key
-	mutex := l.rs.NewMutex(prefixedKey,
+	mutex := l.rs.NewMutex(key,
 		redsync.WithExpiry(options.timeout),
 		redsync.WithTries(1),
 	)
