@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"go.uber.org/zap"
 )
 
 type RedisCacheConfig struct {
@@ -19,7 +18,7 @@ type redisCache struct {
 	client *redis.Client
 }
 
-func NewRedisCache(lg *zap.Logger, cfg *RedisCacheConfig) (Cache, func(), error) {
+func NewRedisCache(cfg *RedisCacheConfig) (Cache, func(), error) {
 	client := redis.NewClient(&redis.Options{
 		Addr: cfg.Addr,
 		DB:   int(cfg.DB),
@@ -36,7 +35,6 @@ func NewRedisCache(lg *zap.Logger, cfg *RedisCacheConfig) (Cache, func(), error)
 			client: client,
 		}, func() {
 			client.Close()
-			lg.Info("closed redis connection for cache", zap.String("addr", cfg.Addr), zap.Int("db", int(cfg.DB)))
 		}, nil
 }
 
