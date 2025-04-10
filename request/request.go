@@ -26,7 +26,7 @@ type requestOption struct {
 	queryParams          map[string]string
 	requestHeaders       map[string]string
 	requestBody          []byte
-	signer               requestSigner
+	signer               RequestSigner
 	signerKeys           any
 	correlationIdKey     string
 	correlationId        string
@@ -136,7 +136,7 @@ func WithJsonAsQueryParamsAndRequestBody(requestBody any) Option {
 	})
 }
 
-func WithRequestSigner(requestSigner requestSigner, signerKeys any) Option {
+func WithRequestSigner(requestSigner RequestSigner, signerKeys any) Option {
 	return optionFunc(func(option *requestOption) error {
 		option.signer = requestSigner
 		option.signerKeys = signerKeys
@@ -208,12 +208,12 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 
 	// sign the request
 	if option.signer != nil {
-		if err := option.signer(requestSigningData{
-			method:         method,
-			url:            requestUrl,
-			queryParams:    option.queryParams,
-			requestHeaders: option.requestHeaders,
-			requestBody:    option.requestBody,
+		if err := option.signer(RequestSigningData{
+			Method:         method,
+			Url:            requestUrl,
+			QueryParams:    option.queryParams,
+			RequestHeaders: option.requestHeaders,
+			RequestBody:    option.requestBody,
 		}, option.signerKeys); err != nil {
 			option.lg.Error("[HTTP-REQUEST-ERROR: failed to sign request]",
 				zap.Error(err),

@@ -16,14 +16,14 @@ import (
 	"github.com/infigaming-com/go-common/util"
 )
 
-type requestSigner func(requestSigningData requestSigningData, keys any) error
+type RequestSigner func(requestSigningData RequestSigningData, keys any) error
 
-type requestSigningData struct {
-	method         string
-	url            string
-	queryParams    map[string]string
-	requestHeaders map[string]string
-	requestBody    []byte
+type RequestSigningData struct {
+	Method         string
+	Url            string
+	QueryParams    map[string]string
+	RequestHeaders map[string]string
+	RequestBody    []byte
 }
 
 type HmacSha256SignerKeys struct {
@@ -44,9 +44,9 @@ type JwtSignerKeys struct {
 	PrivateKey      string
 }
 
-func getHmacSha256SignerCanonicalizedMessage(requestSigningData requestSigningData) []byte {
-	if requestSigningData.method == http.MethodGet {
-		queryParams := requestSigningData.queryParams
+func getHmacSha256SignerCanonicalizedMessage(requestSigningData RequestSigningData) []byte {
+	if requestSigningData.Method == http.MethodGet {
+		queryParams := requestSigningData.QueryParams
 		var formattedParams bytes.Buffer
 		for key, value := range queryParams {
 			formattedParams.WriteString(key + "=" + value + "&")
@@ -57,32 +57,32 @@ func getHmacSha256SignerCanonicalizedMessage(requestSigningData requestSigningDa
 		return formattedParams.Bytes()
 	}
 
-	return requestSigningData.requestBody
+	return requestSigningData.RequestBody
 }
 
-func HmacSha256Signer(requestSigningData requestSigningData, keys any) error {
+func HmacSha256Signer(requestSigningData RequestSigningData, keys any) error {
 	hmacSha256SignerKeys, ok := keys.(HmacSha256SignerKeys)
 	if !ok {
 		return fmt.Errorf("invalid signer keys for hmac sha256 signer: %v", keys)
 	}
 	canonicalizedMessage := getHmacSha256SignerCanonicalizedMessage(requestSigningData)
-	requestSigningData.requestHeaders[hmacSha256SignerKeys.ApiKeyHeader] = hmacSha256SignerKeys.ApiKey
+	requestSigningData.RequestHeaders[hmacSha256SignerKeys.ApiKeyHeader] = hmacSha256SignerKeys.ApiKey
 	signature := util.HmacSha256Hash(canonicalizedMessage, []byte(hmacSha256SignerKeys.ApiKeySecret))
-	requestSigningData.requestHeaders[hmacSha256SignerKeys.SignatureHeader] = hex.EncodeToString(signature)
+	requestSigningData.RequestHeaders[hmacSha256SignerKeys.SignatureHeader] = hex.EncodeToString(signature)
 	return nil
 }
 
-func getMd5QueryParametersSignerCanonicalizedMessage(requestSigningData requestSigningData) []byte {
+func getMd5QueryParametersSignerCanonicalizedMessage(requestSigningData RequestSigningData) []byte {
 	// Create url.Values from queryParams map
 	values := url.Values{}
-	for key, value := range requestSigningData.queryParams {
+	for key, value := range requestSigningData.QueryParams {
 		values.Set(key, value)
 	}
 
 	return []byte(values.Encode())
 }
 
-func Md5QueryParametersSigner(requestSigningData requestSigningData, keys any) error {
+func Md5QueryParametersSigner(requestSigningData RequestSigningData, keys any) error {
 	md5SignerKeys, ok := keys.(Md5SignerKeys)
 	if !ok {
 		return fmt.Errorf("invalid signer keys for md5 query parameters signer: %v", keys)
@@ -93,15 +93,15 @@ func Md5QueryParametersSigner(requestSigningData requestSigningData, keys any) e
 	hashHex := hex.EncodeToString(hash[:])
 
 	// Add hash to query parameters instead of body
-	if requestSigningData.queryParams == nil {
-		requestSigningData.queryParams = make(map[string]string)
+	if requestSigningData.QueryParams == nil {
+		requestSigningData.QueryParams = make(map[string]string)
 	}
-	requestSigningData.queryParams["hash"] = hashHex
+	requestSigningData.QueryParams["hash"] = hashHex
 
 	return nil
 }
 
-func JwtSigner(requestSigningData requestSigningData, keys any) error {
+func JwtSigner(requestSigningData RequestSigningData, keys any) error {
 	jwtSignerKeys, ok := keys.(JwtSignerKeys)
 	if !ok {
 		return fmt.Errorf("invalid signer keys for jwt signer: %v", keys)
@@ -123,7 +123,7 @@ func JwtSigner(requestSigningData requestSigningData, keys any) error {
 	}
 
 	var claims jwt.MapClaims
-	if err := json.Unmarshal(requestSigningData.requestBody, &claims); err != nil {
+	if err := json.Unmarshal(requestSigningData.RequestBody, &claims); err != nil {
 		return fmt.Errorf("invalid request body for jwt signer: %v", err)
 	}
 
@@ -133,8 +133,8 @@ func JwtSigner(requestSigningData requestSigningData, keys any) error {
 		return fmt.Errorf("invalid request body for jwt signer: %v", err)
 	}
 
-	requestSigningData.requestHeaders[jwtSignerKeys.ApiKeyHeader] = jwtSignerKeys.ApiKey
-	requestSigningData.requestHeaders[jwtSignerKeys.SignatureHeader] = tokenString
+	requestSigningData.RequestHeaders[jwtSignerKeys.ApiKeyHeader] = jwtSignerKeys.ApiKey
+	requestSigningData.RequestHeaders[jwtSignerKeys.SignatureHeader] = tokenString
 
 	return nil
 }
