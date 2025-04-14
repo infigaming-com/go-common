@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"maps"
+
 	"github.com/google/uuid"
 	"github.com/infigaming-com/go-common/util"
 	"go.uber.org/zap"
@@ -27,6 +29,7 @@ type requestOption struct {
 	requestHeaders       map[string]string
 	requestBody          []byte
 	signer               RequestSigner
+	recorder             RequestRecorder
 	signerKeys           any
 	correlationIdKey     string
 	correlationId        string
@@ -51,6 +54,7 @@ func defaultRequestOption() *requestOption {
 		requestHeaders:       make(map[string]string),
 		requestBody:          nil,
 		signer:               nil,
+		recorder:             nil,
 		signerKeys:           nil,
 		correlationIdKey:     "X-Correlation-ID",
 		correlationId:        "",
@@ -74,18 +78,14 @@ func WithDebugEnabled(debugEnabled bool) Option {
 
 func WithQueryParams(queryParams map[string]string) Option {
 	return optionFunc(func(option *requestOption) error {
-		for k, v := range queryParams {
-			option.queryParams[k] = v
-		}
+		maps.Copy(option.queryParams, queryParams)
 		return nil
 	})
 }
 
 func WithRequestHeaders(requestHeaders map[string]string) Option {
 	return optionFunc(func(option *requestOption) error {
-		for k, v := range requestHeaders {
-			option.requestHeaders[k] = v
-		}
+		maps.Copy(option.requestHeaders, requestHeaders)
 		return nil
 	})
 }
@@ -140,6 +140,13 @@ func WithRequestSigner(requestSigner RequestSigner, signerKeys any) Option {
 	return optionFunc(func(option *requestOption) error {
 		option.signer = requestSigner
 		option.signerKeys = signerKeys
+		return nil
+	})
+}
+
+func WithRequestRecorder(requestRecord RequestRecorder) Option {
+	return optionFunc(func(option *requestOption) error {
+		option.recorder = requestRecord
 		return nil
 	})
 }
@@ -203,6 +210,22 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 				zap.ByteString("responseBody", responseBody),
 				zap.Duration("duration", time.Since(start)),
 			)
+		}
+
+		if option.recorder != nil {
+			queryParams, _ := json.Marshal(option.queryParams)
+			requestHeaders, _ := json.Marshal(option.requestHeaders)
+			option.recorder(&RequestRecordData{
+				Method:         method,
+				Url:            requestUrl,
+				QueryParams:    string(queryParams),
+				RequestHeaders: string(requestHeaders),
+				RequestBody:    string(option.requestBody),
+				HttpStatusCode: httpStatusCode,
+				ResponseBody:   string(responseBody),
+				Duration:       time.Since(start).Milliseconds(),
+			})
+
 		}
 	}()
 
