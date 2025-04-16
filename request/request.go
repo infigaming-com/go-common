@@ -236,7 +236,7 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 			Url:            requestUrl,
 			QueryParams:    option.queryParams,
 			RequestHeaders: option.requestHeaders,
-			RequestBody:    option.requestBody,
+			RequestBody:    &option.requestBody,
 		}, option.signerKeys); err != nil {
 			option.lg.Error("[HTTP-REQUEST-ERROR: failed to sign request]",
 				zap.Error(err),
