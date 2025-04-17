@@ -8,67 +8,12 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-type RedisCacheOptions struct {
-	Addr           string `mapstructure:"ADDR"`
-	DB             int64  `mapstructure:"DB"`
-	ConnectTimeout int64  `mapstructure:"CONNECT_TIMEOUT"`
-}
-
-type RedisCacheOption func(*RedisCacheOptions)
-
-func WithRedisCacheAddr(addr string) RedisCacheOption {
-	return func(o *RedisCacheOptions) {
-		o.Addr = addr
-	}
-}
-
-func WithRedisCacheDB(db int64) RedisCacheOption {
-	return func(o *RedisCacheOptions) {
-		o.DB = db
-	}
-}
-
-func WithRedisCacheConnectTimeout(connectTimeout int64) RedisCacheOption {
-	return func(o *RedisCacheOptions) {
-		o.ConnectTimeout = connectTimeout
-	}
-}
-
-func defaultRedisCacheOptions() *RedisCacheOptions {
-	return &RedisCacheOptions{
-		Addr:           "localhost:6379",
-		DB:             0,
-		ConnectTimeout: 30,
-	}
-}
-
 type redisCache struct {
 	client *redis.Client
 }
 
-func NewRedisCache(opts ...RedisCacheOption) (Cache, func(), error) {
-	redisCacheOptions := defaultRedisCacheOptions()
-	for _, opt := range opts {
-		opt(redisCacheOptions)
-	}
-
-	client := redis.NewClient(&redis.Options{
-		Addr: redisCacheOptions.Addr,
-		DB:   int(redisCacheOptions.DB),
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(redisCacheOptions.ConnectTimeout)*time.Second)
-	defer cancel()
-	_, err := client.Ping(ctx).Result()
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to connect to redis for cache: %w", err)
-	}
-
-	return &redisCache{
-			client: client,
-		}, func() {
-			client.Close()
-		}, nil
+func NewRedisCache(client *redis.Client) (Cache, error) {
+	return &redisCache{client: client}, nil
 }
 
 func (c *redisCache) Set(ctx context.Context, key string, value string, expiry time.Duration) error {

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
-	"go.uber.org/zap"
 )
 
 type CurrencyKey struct {
@@ -35,18 +35,39 @@ func (c *Currency) Value() CurrencyValue {
 	}
 }
 
-func TestRedisCacheCurrencySetAndGet(t *testing.T) {
-	lg, err := zap.NewDevelopment()
+func setupTestRedis(t *testing.T) (*redis.Client, func()) {
+	client := redis.NewClient(&redis.Options{
+		Addr: "localhost:6379",
+		DB:   15, // Using DB 15 for testing to avoid conflicts with other tests
+	})
+
+	// Test connection
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := client.Ping(ctx).Result()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Failed to connect to Redis: %v", err)
 	}
 
-	cache, close := NewRedisCache(lg, &RedisCacheConfig{
-		Addr:           "localhost:6379",
-		DB:             15,
-		ConnectTimeout: 5,
-	})
-	defer close()
+	// Cleanup function
+	cleanup := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		client.FlushDB(ctx)
+		client.Close()
+	}
+
+	return client, cleanup
+}
+
+func TestRedisCacheCurrencySetAndGet(t *testing.T) {
+	client, cleanup := setupTestRedis(t)
+	defer cleanup()
+
+	cache, closeCache, err := NewRedisCache(client)
+	assert.NoError(t, err)
+	defer closeCache()
 
 	currency := &Currency{
 		LineName:      "test_line_name",
@@ -70,17 +91,12 @@ func TestRedisCacheCurrencySetAndGet(t *testing.T) {
 }
 
 func TestRedisCacheCurrencySetsAndGets(t *testing.T) {
-	lg, err := zap.NewDevelopment()
-	if err != nil {
-		t.Fatal(err)
-	}
+	client, cleanup := setupTestRedis(t)
+	defer cleanup()
 
-	cache, close := NewRedisCache(lg, &RedisCacheConfig{
-		Addr:           "localhost:6379",
-		DB:             15,
-		ConnectTimeout: 5,
-	})
-	defer close()
+	cache, closeCache, err := NewRedisCache(client)
+	assert.NoError(t, err)
+	defer closeCache()
 
 	currency1 := &Currency{
 		LineName:      "test_line_name",
