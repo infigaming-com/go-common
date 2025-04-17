@@ -3,86 +3,29 @@ package lock
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/go-redsync/redsync/v4"
 	"github.com/go-redsync/redsync/v4/redis/goredis/v9"
-	goredislib "github.com/redis/go-redis/v9"
+	"github.com/redis/go-redis/v9"
 )
-
-type RedisLockOptions struct {
-	Addr           string `mapstructure:"ADDR"`
-	DB             int64  `mapstructure:"DB"`
-	ConnectTimeout int64  `mapstructure:"CONNECT_TIMEOUT"`
-}
 
 type redisLock struct {
 	rs *redsync.Redsync
 }
 
-type redisLockOption func(*RedisLockOptions)
-
-func WithRedisLockAddr(addr string) redisLockOption {
-	return func(o *RedisLockOptions) {
-		o.Addr = addr
-	}
-}
-
-func WithRedisLockDB(db int64) redisLockOption {
-	return func(o *RedisLockOptions) {
-		o.DB = db
-	}
-}
-
-func WithRedisLockConnectTimeout(connectTimeout int64) redisLockOption {
-	return func(o *RedisLockOptions) {
-		o.ConnectTimeout = connectTimeout
-	}
-}
-
-func defaultRedisLockOptions() *RedisLockOptions {
-	return &RedisLockOptions{
-		Addr:           "localhost:6379",
-		DB:             0,
-		ConnectTimeout: 30,
-	}
-}
-
 func defaultLockOptions() *LockOptions {
 	return &LockOptions{
-		timeout:    30 * time.Second,
-		retryDelay: 200 * time.Millisecond,
-		retries:    10,
+		expiry:     8 * time.Second,
+		retryDelay: 50 * time.Millisecond,
+		retries:    32,
 	}
 }
 
-func NewRedisLock(opts ...redisLockOption) (Lock, func(), error) {
-	redisLockOptions := defaultRedisLockOptions()
-	for _, opt := range opts {
-		opt(redisLockOptions)
-	}
-
-	client := goredislib.NewClient(&goredislib.Options{
-		Addr: redisLockOptions.Addr,
-		DB:   int(redisLockOptions.DB),
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(redisLockOptions.ConnectTimeout)*time.Second)
-	defer cancel()
-	_, err := client.Ping(ctx).Result()
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to connect to redis for lock: %w", err)
-	}
-
+func NewRedisLock(client *redis.Client) (Lock, error) {
 	pool := goredis.NewPool(client)
 	rs := redsync.New(pool)
-
-	return &redisLock{
-			rs: rs,
-		}, func() {
-			client.Close()
-		}, nil
+	return &redisLock{rs: rs}, nil
 }
 
 func createUnlock(mutex *redsync.Mutex) func(context.Context) error {
@@ -96,7 +39,7 @@ func createUnlock(mutex *redsync.Mutex) func(context.Context) error {
 			return err
 		}
 		if !ok {
-			return nil
+			return errors.New("failed to unlock")
 		}
 		return nil
 	}
@@ -119,14 +62,14 @@ func (l *redisLock) Lock(ctx context.Context, key string, opts ...LockOption) (f
 	}
 
 	mutex := l.rs.NewMutex(key,
-		redsync.WithExpiry(options.timeout),
+		redsync.WithExpiry(options.expiry),
 		redsync.WithRetryDelay(options.retryDelay),
 		redsync.WithTries(options.retries),
 	)
-
 	err := mutex.LockContext(ctx)
 	if err != nil {
-		if errors.Is(err, redsync.ErrFailed) {
+		var errTaken *redsync.ErrTaken
+		if errors.As(err, &errTaken) {
 			return nil, ErrLockNotAcquired
 		}
 		return nil, err
@@ -152,13 +95,14 @@ func (l *redisLock) TryLock(ctx context.Context, key string, opts ...LockOption)
 	}
 
 	mutex := l.rs.NewMutex(key,
-		redsync.WithExpiry(options.timeout),
+		redsync.WithExpiry(options.expiry),
 		redsync.WithTries(1),
 	)
 
 	err := mutex.LockContext(ctx)
 	if err != nil {
-		if errors.Is(err, redsync.ErrFailed) {
+		var errTaken *redsync.ErrTaken
+		if errors.As(err, &errTaken) {
 			return nil, ErrLockNotAcquired
 		}
 		return nil, err

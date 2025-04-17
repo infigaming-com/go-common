@@ -16,85 +16,11 @@ type redisUID struct {
 	name   string
 }
 
-type Options struct {
-	addr           string
-	db             int64
-	connectTimeout time.Duration
-	name           string
-}
-
-type Option interface {
-	apply(*Options) error
-}
-
-type optionFunc func(*Options) error
-
-func (f optionFunc) apply(o *Options) error {
-	return f(o)
-}
-
-func defaultOptions() *Options {
-	return &Options{
-		addr:           "localhost:6379",
-		db:             0,
-		connectTimeout: 5 * time.Second,
-	}
-}
-
-func WithAddr(addr string) Option {
-	return optionFunc(func(o *Options) error {
-		o.addr = addr
-		return nil
-	})
-}
-
-func WithDB(db int64) Option {
-	return optionFunc(func(o *Options) error {
-		o.db = db
-		return nil
-	})
-}
-
-func WithConnectTimeout(timeout time.Duration) Option {
-	return optionFunc(func(o *Options) error {
-		o.connectTimeout = timeout
-		return nil
-	})
-}
-
-func WithName(name string) Option {
-	return optionFunc(func(o *Options) error {
-		o.name = name
-		return nil
-	})
-}
-
-func NewRedisUID(opts ...Option) (UID, func(), error) {
-	cfg := defaultOptions()
-	for _, opt := range opts {
-		if err := opt.apply(cfg); err != nil {
-			return nil, nil, fmt.Errorf("failed to apply option to redis uid: %w", err)
-		}
-	}
-
-	redisOptions := &redis.Options{
-		Addr: cfg.addr,
-		DB:   int(cfg.db),
-	}
-	client := redis.NewClient(redisOptions)
-
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.connectTimeout)
-	defer cancel()
-	if _, err := client.Ping(ctx).Result(); err != nil {
-		return nil, nil, fmt.Errorf("failed to connect to redis for uid: %w", err)
-	}
-
+func NewRedisUID(client *redis.Client, name string) (UID, error) {
 	return &redisUID{
-			client: client,
-			name:   cfg.name,
-		}, func() {
-			client.Close()
-		}, nil
+		client: client,
+		name:   name,
+	}, nil
 }
 
 func (r *redisUID) New() (string, error) {

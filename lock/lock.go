@@ -17,16 +17,16 @@ type Lock interface {
 }
 
 type LockOptions struct {
-	timeout    time.Duration
+	expiry     time.Duration
 	retryDelay time.Duration
 	retries    int
 }
 
 type LockOption func(*LockOptions)
 
-func WithTimeout(timeout time.Duration) LockOption {
+func WithExpiry(expiry time.Duration) LockOption {
 	return func(o *LockOptions) {
-		o.timeout = timeout
+		o.expiry = expiry
 	}
 }
 
