@@ -23,7 +23,7 @@ type RequestSigningData struct {
 	Url            string
 	QueryParams    map[string]string
 	RequestHeaders map[string]string
-	RequestBody    []byte
+	RequestBody    *[]byte
 }
 
 type HmacSha256SignerKeys struct {
@@ -57,7 +57,7 @@ func getHmacSha256SignerCanonicalizedMessage(requestSigningData RequestSigningDa
 		return formattedParams.Bytes()
 	}
 
-	return requestSigningData.RequestBody
+	return *requestSigningData.RequestBody
 }
 
 func HmacSha256Signer(requestSigningData RequestSigningData, keys any) error {
@@ -123,7 +123,7 @@ func JwtSigner(requestSigningData RequestSigningData, keys any) error {
 	}
 
 	var claims jwt.MapClaims
-	if err := json.Unmarshal(requestSigningData.RequestBody, &claims); err != nil {
+	if err := json.Unmarshal(*requestSigningData.RequestBody, &claims); err != nil {
 		return fmt.Errorf("invalid request body for jwt signer: %v", err)
 	}
 
