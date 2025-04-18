@@ -160,7 +160,7 @@ func WithSlowRequestThreshold(slowRequestThreshold time.Duration) Option {
 func getHttpClient() *http.Client {
 	once.Do(func() {
 		httpClient = &http.Client{
-			Timeout: 30 * time.Second, // timeout across all requests
+			Timeout: 3 * time.Second, // timeout across all requests
 		}
 	})
 	return httpClient
