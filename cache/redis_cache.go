@@ -12,8 +12,8 @@ type redisCache struct {
 	client *redis.Client
 }
 
-func NewRedisCache(client *redis.Client) (Cache, error) {
-	return &redisCache{client: client}, nil
+func NewRedisCache(client *redis.Client) Cache {
+	return &redisCache{client: client}
 }
 
 func (c *redisCache) Set(ctx context.Context, key string, value string, expiry time.Duration) error {

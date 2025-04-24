@@ -22,10 +22,10 @@ func defaultLockOptions() *LockOptions {
 	}
 }
 
-func NewRedisLock(client *redis.Client) (Lock, error) {
+func NewRedisLock(client *redis.Client) Lock {
 	pool := goredis.NewPool(client)
 	rs := redsync.New(pool)
-	return &redisLock{rs: rs}, nil
+	return &redisLock{rs: rs}
 }
 
 func createUnlock(mutex *redsync.Mutex) func(context.Context) error {

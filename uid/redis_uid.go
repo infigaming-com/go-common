@@ -16,11 +16,11 @@ type redisUID struct {
 	name   string
 }
 
-func NewRedisUID(client *redis.Client, name string) (UID, error) {
+func NewRedisUID(client *redis.Client, name string) UID {
 	return &redisUID{
 		client: client,
 		name:   name,
-	}, nil
+	}
 }
 
 func (r *redisUID) New() (string, error) {
