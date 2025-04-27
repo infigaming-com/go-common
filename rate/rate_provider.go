@@ -2,12 +2,14 @@ package rate
 
 import (
 	"context"
+
+	"github.com/shopspring/decimal"
 )
 
 type Rate struct {
-	Timestamp int64   `json:"timestamp"`
-	Currency  string  `json:"currency"`
-	Rate      float64 `json:"rate"`
+	Timestamp int64           `json:"timestamp"`
+	Currency  string          `json:"currency"`
+	Rate      decimal.Decimal `json:"rate"`
 }
 
 type RateProvider interface {

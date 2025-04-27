@@ -8,7 +8,15 @@ import (
 	"time"
 
 	"github.com/infigaming-com/go-common/request"
+	"github.com/samber/lo"
+	"github.com/shopspring/decimal"
 )
+
+type furionRate struct {
+	Timestamp int64  `json:"timestamp"`
+	Currency  string `json:"currency"`
+	Rate      string `json:"rate"`
+}
 
 type furionRateProvider struct {
 	url          string
@@ -57,11 +65,18 @@ func (p *furionRateProvider) GetRates(ctx context.Context, currencies []string, 
 	if statusCode != http.StatusOK {
 		return nil, fmt.Errorf("status code: %d, response: %s", statusCode, string(responseBody))
 	}
-	var rates []Rate
-	if err := json.Unmarshal(responseBody, &rates); err != nil {
+	var furionRates []furionRate
+	if err := json.Unmarshal(responseBody, &furionRates); err != nil {
 		return nil, err
 	}
-	return rates, nil
+
+	return lo.FilterMap(furionRates, func(rate furionRate, _ int) (Rate, bool) {
+		rateDecimal, err := decimal.NewFromString(rate.Rate)
+		if err != nil {
+			return Rate{}, false
+		}
+		return Rate{Timestamp: rate.Timestamp, Currency: rate.Currency, Rate: rateDecimal}, true
+	}), nil
 }
 
 func (p *furionRateProvider) GetRate(ctx context.Context, currency string, timestamp int64) (*Rate, error) {
