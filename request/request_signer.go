@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/infigaming-com/go-common/util"
@@ -47,13 +48,25 @@ type JwtSignerKeys struct {
 func getHmacSha256SignerCanonicalizedMessage(requestSigningData RequestSigningData) []byte {
 	if requestSigningData.Method == http.MethodGet {
 		queryParams := requestSigningData.QueryParams
-		var formattedParams bytes.Buffer
+
+		// Create a slice to store and sort the parameters
+		paramPairs := make([]string, 0, len(queryParams))
 		for key, value := range queryParams {
-			formattedParams.WriteString(key + "=" + value + "&")
+			paramPairs = append(paramPairs, key+"="+value)
 		}
-		if formattedParams.Len() > 0 {
-			formattedParams.Truncate(formattedParams.Len() - 1) // Remove the last &
+
+		// Sort the parameters alphabetically
+		sort.Strings(paramPairs)
+
+		// Write the sorted parameters to the buffer
+		var formattedParams bytes.Buffer
+		for i, pair := range paramPairs {
+			if i > 0 {
+				formattedParams.WriteString("&")
+			}
+			formattedParams.WriteString(pair)
 		}
+
 		return formattedParams.Bytes()
 	}
 
