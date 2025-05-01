@@ -258,7 +258,6 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 		}
 	}
 
-	fmt.Printf("ddfsfsfsf %s", string(option.requestBody))
 	req, err := http.NewRequestWithContext(ctx, method, requestUrl, bytes.NewReader(option.requestBody))
 	if err != nil {
 		option.lg.Error("[HTTP-REQUEST-ERROR: failed to create request]",
