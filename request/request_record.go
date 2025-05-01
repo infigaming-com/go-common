@@ -10,5 +10,6 @@ type RequestRecordData struct {
 	RequestBody    string
 	HttpStatusCode int
 	ResponseBody   string
+	Error          string
 	Duration       int64
 }

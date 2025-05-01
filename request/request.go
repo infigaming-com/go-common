@@ -192,6 +192,26 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 	}
 
 	defer func() {
+		if option.recorder != nil {
+			queryParams, _ := json.Marshal(option.queryParams)
+			requestHeaders, _ := json.Marshal(option.requestHeaders)
+			errorStr := ""
+			if err != nil {
+				errorStr = err.Error()
+			}
+			option.recorder(&RequestRecordData{
+				Method:         method,
+				Url:            requestUrl,
+				QueryParams:    string(queryParams),
+				RequestHeaders: string(requestHeaders),
+				RequestBody:    string(option.requestBody),
+				HttpStatusCode: httpStatusCode,
+				ResponseBody:   string(responseBody),
+				Error:          errorStr,
+				Duration:       time.Since(start).Milliseconds(),
+			})
+		}
+
 		if err != nil {
 			option.lg.Error("[HTTP-REQUEST-ERROR]",
 				zap.Error(err),
@@ -220,21 +240,6 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 			)
 		}
 
-		if option.recorder != nil {
-			queryParams, _ := json.Marshal(option.queryParams)
-			requestHeaders, _ := json.Marshal(option.requestHeaders)
-			option.recorder(&RequestRecordData{
-				Method:         method,
-				Url:            requestUrl,
-				QueryParams:    string(queryParams),
-				RequestHeaders: string(requestHeaders),
-				RequestBody:    string(option.requestBody),
-				HttpStatusCode: httpStatusCode,
-				ResponseBody:   string(responseBody),
-				Duration:       time.Since(start).Milliseconds(),
-			})
-
-		}
 	}()
 
 	// sign the request
