@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -101,6 +102,13 @@ func WithCorrelationId(correlationIdKey, correlationId string) Option {
 func WithRequestBody(requestBody []byte) Option {
 	return optionFunc(func(option *requestOption) error {
 		option.requestBody = requestBody
+		return nil
+	})
+}
+
+func WithRequestFromBody(requestBody url.Values) Option {
+	return optionFunc(func(option *requestOption) error {
+		option.requestBody = []byte(requestBody.Encode())
 		return nil
 	})
 }
@@ -250,6 +258,7 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 		}
 	}
 
+	fmt.Printf("ddfsfsfsf %s", string(option.requestBody))
 	req, err := http.NewRequestWithContext(ctx, method, requestUrl, bytes.NewReader(option.requestBody))
 	if err != nil {
 		option.lg.Error("[HTTP-REQUEST-ERROR: failed to create request]",
@@ -341,5 +350,11 @@ func Post(ctx context.Context, requestUrl string, requestBody []byte, options ..
 func PostJson(ctx context.Context, requestUrl string, v any, options ...Option) (httpStatusCode int, responseBody []byte, err error) {
 	defaultHeader := map[string]string{"Content-Type": "application/json"}
 	options = append(options, WithRequestHeaders(defaultHeader), WithJsonAsQueryParamsAndRequestBody(v))
+	return Request(ctx, http.MethodPost, requestUrl, options...)
+}
+
+func PostForm(ctx context.Context, requestUrl string, requestBody url.Values, options ...Option) (httpStatusCode int, responseBody []byte, err error) {
+	defaultHeader := map[string]string{"Content-Type": "application/x-www-form-urlencoded"}
+	options = append(options, WithRequestHeaders(defaultHeader), WithRequestFromBody(requestBody))
 	return Request(ctx, http.MethodPost, requestUrl, options...)
 }
