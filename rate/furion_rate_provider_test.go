@@ -6,13 +6,11 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"go.uber.org/zap"
 )
 
 func TestFurionRateProvider_TestGetRates(t *testing.T) {
-	provider := NewFurionRateProvider(
-		zap.NewNop(),
-		"http://localhost:8080/rates",
+	provider, err := NewFurionRateProvider(
+		"http://localhost:8082/rates",
 		"",
 		"",
 	)
@@ -22,13 +20,23 @@ func TestFurionRateProvider_TestGetRates(t *testing.T) {
 }
 
 func TestFurionRateProvider_TestGetRate(t *testing.T) {
-	provider := NewFurionRateProvider(
-		zap.NewNop(),
-		"http://localhost:8080/rates",
+	provider, err := NewFurionRateProvider(
+		"http://localhost:8082/rates",
 		"",
 		"",
 	)
 	rate, err := provider.GetRate(context.Background(), "USDT", time.Now().Unix())
 	assert.NoError(t, err)
 	assert.NotNil(t, rate)
+}
+
+func TestFurionRateProvider_TestGetRatesMap(t *testing.T) {
+	provider, err := NewFurionRateProvider(
+		"http://localhost:8082",
+		"",
+		"",
+	)
+	ratesMap, err := provider.GetRatesMap(context.Background(), []string{"USD", "USDT", "JPY", "VND", "VND(K)"}, time.Now().Unix())
+	assert.NoError(t, err)
+	assert.NotNil(t, ratesMap)
 }
