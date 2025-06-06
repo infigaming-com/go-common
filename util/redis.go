@@ -17,7 +17,7 @@ func NewRedisClient(ctx context.Context, addr string, db int64, connectTimeout t
 	defer cancel()
 	_, err := redisClient.Ping(timeoutCtx).Result()
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to redis for cache: %w", err)
+		return nil, fmt.Errorf("failed to connect to redis: %w", err)
 	}
 	return redisClient, nil
 }
