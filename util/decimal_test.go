@@ -115,3 +115,176 @@ func TestNewSumDecimal(t *testing.T) {
 		})
 	}
 }
+
+func TestExportDecimal(t *testing.T) {
+	tcs := []struct {
+		name        string
+		targetType  string
+		value       decimal.Decimal
+		expectValue any
+		expectErr   bool
+	}{
+		{
+			name:        "string",
+			targetType:  "string",
+			value:       decimal.NewFromInt(123),
+			expectValue: "123",
+			expectErr:   false,
+		},
+		{
+			name:        "int",
+			targetType:  "int",
+			value:       decimal.NewFromInt(123),
+			expectValue: int(123),
+			expectErr:   false,
+		},
+		{
+			name:        "int32",
+			targetType:  "int32",
+			value:       decimal.NewFromInt(123),
+			expectValue: int32(123),
+			expectErr:   false,
+		},
+		{
+			name:        "uint32",
+			targetType:  "uint32",
+			value:       decimal.NewFromInt(123),
+			expectValue: uint32(123),
+			expectErr:   false,
+		},
+		{
+			name:        "int64",
+			targetType:  "int64",
+			value:       decimal.NewFromInt(123),
+			expectValue: int64(123),
+			expectErr:   false,
+		},
+		{
+			name:        "uint64",
+			targetType:  "uint64",
+			value:       decimal.NewFromInt(123),
+			expectValue: uint64(123),
+			expectErr:   false,
+		},
+		{
+			name:        "float32",
+			targetType:  "float32",
+			value:       decimal.NewFromInt(123),
+			expectValue: float32(123),
+			expectErr:   false,
+		},
+		{
+			name:        "float64",
+			targetType:  "float64",
+			value:       decimal.NewFromInt(123),
+			expectValue: float64(123),
+			expectErr:   false,
+		},
+		{
+			name:        "negative int",
+			targetType:  "int",
+			value:       decimal.NewFromInt(-123),
+			expectValue: int(-123),
+			expectErr:   false,
+		},
+		{
+			name:        "negative int32",
+			targetType:  "int32",
+			value:       decimal.NewFromInt(-123),
+			expectValue: int32(-123),
+			expectErr:   false,
+		},
+		{
+			name:        "negative int64",
+			targetType:  "int64",
+			value:       decimal.NewFromInt(-123),
+			expectValue: int64(-123),
+			expectErr:   false,
+		},
+		{
+			name:        "negative float32",
+			targetType:  "float32",
+			value:       decimal.NewFromInt(-123),
+			expectValue: float32(-123),
+			expectErr:   false,
+		},
+		{
+			name:        "negative float64",
+			targetType:  "float64",
+			value:       decimal.NewFromInt(-123),
+			expectValue: float64(-123),
+			expectErr:   false,
+		},
+		{
+			name:        "decimal places string",
+			targetType:  "string",
+			value:       decimal.NewFromFloat(123.45),
+			expectValue: "123.45",
+			expectErr:   false,
+		},
+		{
+			name:        "decimal places float32",
+			targetType:  "float32",
+			value:       decimal.NewFromFloat(123.45),
+			expectValue: float32(123.45),
+			expectErr:   false,
+		},
+		{
+			name:        "decimal places float64",
+			targetType:  "float64",
+			value:       decimal.NewFromFloat(123.45),
+			expectValue: float64(123.45),
+			expectErr:   false,
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			var actualValue any
+			var actualErr error
+
+			switch tc.targetType {
+			case "string":
+				val, err := ExportDecimal[string](tc.value)
+				actualValue = val
+				actualErr = err
+			case "int":
+				val, err := ExportDecimal[int](tc.value)
+				actualValue = val
+				actualErr = err
+			case "int32":
+				val, err := ExportDecimal[int32](tc.value)
+				actualValue = val
+				actualErr = err
+			case "uint32":
+				val, err := ExportDecimal[uint32](tc.value)
+				actualValue = val
+				actualErr = err
+			case "int64":
+				val, err := ExportDecimal[int64](tc.value)
+				actualValue = val
+				actualErr = err
+			case "uint64":
+				val, err := ExportDecimal[uint64](tc.value)
+				actualValue = val
+				actualErr = err
+			case "float32":
+				val, err := ExportDecimal[float32](tc.value)
+				actualValue = val
+				actualErr = err
+			case "float64":
+				val, err := ExportDecimal[float64](tc.value)
+				actualValue = val
+				actualErr = err
+			default:
+				t.Fatalf("unsupported target type: %s", tc.targetType)
+			}
+
+			if tc.expectErr {
+				assert.Error(t, actualErr)
+			} else {
+				assert.NoError(t, actualErr)
+			}
+			assert.Equal(t, tc.expectValue, actualValue)
+		})
+	}
+}

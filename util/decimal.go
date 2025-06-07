@@ -65,3 +65,27 @@ func NewSumDecimal(values []any) (decimal.Decimal, error) {
 	}
 	return sum, nil
 }
+
+func ExportDecimal[D string | int | int32 | uint32 | int64 | uint64 | float32 | float64](value decimal.Decimal) (D, error) {
+	var zero D
+	switch any(zero).(type) {
+	case string:
+		return any(value.String()).(D), nil
+	case int:
+		return any(int(value.IntPart())).(D), nil
+	case int32:
+		return any(int32(value.IntPart())).(D), nil
+	case uint32:
+		return any(uint32(value.IntPart())).(D), nil
+	case int64:
+		return any(value.IntPart()).(D), nil
+	case uint64:
+		return any(uint64(value.IntPart())).(D), nil
+	case float32:
+		return any(float32(value.InexactFloat64())).(D), nil
+	case float64:
+		return any(value.InexactFloat64()).(D), nil
+	default:
+		return zero, fmt.Errorf("unsupported export type: %T", zero)
+	}
+}
