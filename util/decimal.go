@@ -6,6 +6,10 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+type DecimalNumberType interface {
+	string | int | int32 | uint32 | int64 | uint64 | float32 | float64
+}
+
 func DecimalFromString(s string) (decimal.Decimal, error) {
 	if s == "" {
 		return decimal.Zero, nil
@@ -66,7 +70,7 @@ func NewSumDecimal(values []any) (decimal.Decimal, error) {
 	return sum, nil
 }
 
-func ExportDecimal[D string | int | int32 | uint32 | int64 | uint64 | float32 | float64](value decimal.Decimal) (D, error) {
+func ExportDecimal[D DecimalNumberType](value decimal.Decimal) (D, error) {
 	var zero D
 	switch any(zero).(type) {
 	case string:
