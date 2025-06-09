@@ -14,7 +14,7 @@ func IsKCurrency(currency string) bool {
 
 // NeedConvertToK checks if the currency needs to be converted to K
 func NeedConvertToKCurrency(currency string) bool {
-	return lo.Contains([]string{"VND", "IDR", "MMK"}, strings.ToUpper(currency))
+	return lo.Contains([]string{"VND", "IDR", "MMK", "KHR", "KRW"}, strings.ToUpper(currency))
 }
 
 // GetKCurrency returns the K currency of a currency
