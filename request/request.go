@@ -34,6 +34,7 @@ type requestOption struct {
 	signerKeys           any
 	correlationIdKey     string
 	correlationId        string
+	requestTimeout       time.Duration
 	slowRequestThreshold time.Duration
 }
 
@@ -59,7 +60,8 @@ func defaultRequestOption() *requestOption {
 		signerKeys:           nil,
 		correlationIdKey:     "X-Correlation-ID",
 		correlationId:        "",
-		slowRequestThreshold: 3 * time.Second,
+		requestTimeout:       3 * time.Second,
+		slowRequestThreshold: 5 * time.Second,
 	}
 }
 
@@ -159,6 +161,13 @@ func WithRequestRecorder(requestRecord RequestRecorder) Option {
 	})
 }
 
+func WithRequestTimeout(requestTimeout time.Duration) Option {
+	return optionFunc(func(option *requestOption) error {
+		option.requestTimeout = requestTimeout
+		return nil
+	})
+}
+
 func WithSlowRequestThreshold(slowRequestThreshold time.Duration) Option {
 	return optionFunc(func(option *requestOption) error {
 		if slowRequestThreshold <= 0 {
@@ -175,7 +184,7 @@ func WithSlowRequestThreshold(slowRequestThreshold time.Duration) Option {
 func getHttpClient() *http.Client {
 	once.Do(func() {
 		httpClient = &http.Client{
-			Timeout: 3 * time.Second, // timeout across all requests
+			Timeout: 0,
 		}
 	})
 	return httpClient
@@ -263,7 +272,10 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 		}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, requestUrl, bytes.NewReader(option.requestBody))
+	timeoutCtx, cancel := context.WithTimeout(ctx, option.requestTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(timeoutCtx, method, requestUrl, bytes.NewReader(option.requestBody))
 	if err != nil {
 		option.lg.Error("[HTTP-REQUEST-ERROR: failed to create request]",
 			zap.Error(err),
