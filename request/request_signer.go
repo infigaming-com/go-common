@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"sort"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -86,13 +85,27 @@ func HmacSha256Signer(requestSigningData RequestSigningData, keys any) error {
 }
 
 func getMd5QueryParametersSignerCanonicalizedMessage(requestSigningData RequestSigningData) []byte {
-	// Create url.Values from queryParams map
-	values := url.Values{}
-	for key, value := range requestSigningData.QueryParams {
-		values.Set(key, value)
+	queryParams := requestSigningData.QueryParams
+
+	// Create a slice to store and sort the parameters
+	paramPairs := make([]string, 0, len(queryParams))
+	for key, value := range queryParams {
+		paramPairs = append(paramPairs, key+"="+value)
 	}
 
-	return []byte(values.Encode())
+	// Sort the parameters alphabetically
+	sort.Strings(paramPairs)
+
+	// Write the sorted parameters to the buffer
+	var formattedParams bytes.Buffer
+	for i, pair := range paramPairs {
+		if i > 0 {
+			formattedParams.WriteString("&")
+		}
+		formattedParams.WriteString(pair)
+	}
+
+	return formattedParams.Bytes()
 }
 
 func Md5QueryParametersSigner(requestSigningData RequestSigningData, keys any) error {
