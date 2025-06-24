@@ -236,6 +236,13 @@ func TestExportDecimal(t *testing.T) {
 			expectValue: float64(123.45),
 			expectErr:   false,
 		},
+		{
+			name:        "decimal.Decimal",
+			targetType:  "decimal.Decimal",
+			value:       decimal.NewFromFloat(123.45),
+			expectValue: decimal.NewFromFloat(123.45),
+			expectErr:   false,
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -273,6 +280,10 @@ func TestExportDecimal(t *testing.T) {
 				actualErr = err
 			case "float64":
 				val, err := ExportDecimal[float64](tc.value)
+				actualValue = val
+				actualErr = err
+			case "decimal.Decimal":
+				val, err := ExportDecimal[decimal.Decimal](tc.value)
 				actualValue = val
 				actualErr = err
 			default:

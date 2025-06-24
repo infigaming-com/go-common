@@ -7,7 +7,7 @@ import (
 )
 
 type DecimalNumberType interface {
-	string | int | int32 | uint32 | int64 | uint64 | float32 | float64
+	string | int | int32 | uint32 | int64 | uint64 | float32 | float64 | decimal.Decimal
 }
 
 func DecimalFromString(s string) (decimal.Decimal, error) {
@@ -89,6 +89,8 @@ func ExportDecimal[D DecimalNumberType](value decimal.Decimal) (D, error) {
 		return any(float32(value.InexactFloat64())).(D), nil
 	case float64:
 		return any(value.InexactFloat64()).(D), nil
+	case decimal.Decimal:
+		return any(value).(D), nil
 	default:
 		return zero, fmt.Errorf("unsupported export type: %T", zero)
 	}
