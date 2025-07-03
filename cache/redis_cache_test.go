@@ -65,9 +65,7 @@ func TestRedisCacheCurrencySetAndGet(t *testing.T) {
 	client, cleanup := setupTestRedis(t)
 	defer cleanup()
 
-	cache, closeCache, err := NewRedisCache(client)
-	assert.NoError(t, err)
-	defer closeCache()
+	cache := NewRedisCache(client)
 
 	currency := &Currency{
 		LineName:      "test_line_name",
@@ -75,7 +73,7 @@ func TestRedisCacheCurrencySetAndGet(t *testing.T) {
 		DecimalPlaces: 2,
 	}
 
-	err = SetTyped(context.Background(), cache, currency.Key(), currency.Value(), 60*time.Second)
+	err := SetTyped(context.Background(), cache, currency.Key(), currency.Value(), 60*time.Second)
 	assert.NoError(t, err)
 
 	time.Sleep(1 * time.Second)
@@ -94,9 +92,7 @@ func TestRedisCacheCurrencySetsAndGets(t *testing.T) {
 	client, cleanup := setupTestRedis(t)
 	defer cleanup()
 
-	cache, closeCache, err := NewRedisCache(client)
-	assert.NoError(t, err)
-	defer closeCache()
+	cache := NewRedisCache(client)
 
 	currency1 := &Currency{
 		LineName:      "test_line_name",
@@ -109,7 +105,7 @@ func TestRedisCacheCurrencySetsAndGets(t *testing.T) {
 		DecimalPlaces: 2,
 	}
 
-	err = SetsTyped(context.Background(), cache, map[string]CurrencyValue{
+	err := SetsTyped(context.Background(), cache, map[string]CurrencyValue{
 		currency1.Key(): currency1.Value(),
 		currency2.Key(): currency2.Value(),
 	}, 60*time.Second)
