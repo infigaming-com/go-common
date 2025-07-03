@@ -40,8 +40,7 @@ func TestRedisLock_Lock(t *testing.T) {
 	client := setupTestRedis(t)
 
 	// Create lock with verified client
-	lock, err := NewRedisLock(client)
-	assert.NoError(t, err)
+	lock := NewRedisLock(client)
 	assert.NotNil(t, lock)
 
 	ctx := context.Background()
@@ -80,8 +79,7 @@ func TestRedisLock_Lock(t *testing.T) {
 
 func TestRedisLock_LockWithTimeout(t *testing.T) {
 	client := setupTestRedis(t)
-	lock, err := NewRedisLock(client)
-	assert.NoError(t, err)
+	lock := NewRedisLock(client)
 
 	ctx := context.Background()
 	key := "test-lock-timeout"
@@ -104,8 +102,7 @@ func TestRedisLock_LockWithTimeout(t *testing.T) {
 
 func TestRedisLock_TryLock(t *testing.T) {
 	client := setupTestRedis(t)
-	lock, err := NewRedisLock(client)
-	assert.NoError(t, err)
+	lock := NewRedisLock(client)
 
 	ctx := context.Background()
 	key := "test-try-lock"
@@ -133,13 +130,12 @@ func TestRedisLock_TryLock(t *testing.T) {
 
 func TestRedisLock_InvalidKey(t *testing.T) {
 	client := setupTestRedis(t)
-	lock, err := NewRedisLock(client)
-	assert.NoError(t, err)
+	lock := NewRedisLock(client)
 
 	ctx := context.Background()
 
 	// Test empty key
-	_, err = lock.Lock(ctx, "")
+	_, err := lock.Lock(ctx, "")
 	assert.ErrorIs(t, err, ErrInvalidLockKey)
 
 	// Test empty key with TryLock
@@ -149,8 +145,7 @@ func TestRedisLock_InvalidKey(t *testing.T) {
 
 func TestRedisLock_ContextCancellation(t *testing.T) {
 	client := setupTestRedis(t)
-	lock, err := NewRedisLock(client)
-	assert.NoError(t, err)
+	lock := NewRedisLock(client)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	key := "test-context-cancel"
@@ -159,7 +154,7 @@ func TestRedisLock_ContextCancellation(t *testing.T) {
 	cancel()
 
 	// Test lock with cancelled context
-	_, err = lock.Lock(ctx, key)
+	_, err := lock.Lock(ctx, key)
 	assert.ErrorIs(t, err, context.Canceled)
 
 	// Test try lock with cancelled context
