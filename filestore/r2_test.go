@@ -9,11 +9,11 @@ import (
 )
 
 var (
-	r2AccountId       = ""
-	r2AccessKeyId     = ""
-	r2SecretAccessKey = ""
-	r2Region          = ""
-	r2Bucket          = ""
+	r2AccountId       = "ddaedd929fb29cb074cd488fc486acfe"
+	r2AccessKeyId     = "424b7b30d3f075cccff372e4a268cb43"
+	r2SecretAccessKey = "e2d12830529b67497cf78e48a888d4f104c906d9c5ddde5766aabedc7aeb8fff"
+	r2Region          = "WEUR"
+	r2Bucket          = "resources"
 )
 
 func TestR2FileStore_UploadTextFile(t *testing.T) {
@@ -31,8 +31,9 @@ func TestR2FileStore_UploadTextFile(t *testing.T) {
 
 	err = fileStore.UploadFile(
 		context.Background(),
-		"static/test.js",
 		file,
+		"text/javascript",
+		"static/test.js",
 	)
 	assert.NoError(t, err)
 }
@@ -52,8 +53,9 @@ func TestR2FileStore_UploadImageFile(t *testing.T) {
 
 	err = fileStore.UploadFile(
 		context.Background(),
-		"static/test.png",
 		file,
+		"image/png",
+		"static/test.png",
 	)
 	assert.NoError(t, err)
 }
