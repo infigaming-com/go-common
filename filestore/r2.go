@@ -1,6 +1,7 @@
 package filestore
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -57,4 +58,8 @@ func (s *r2FileStore) UploadFile(ctx context.Context, reader io.Reader, contentT
 	}
 
 	return nil
+}
+
+func (s *r2FileStore) UploadFileData(ctx context.Context, data []byte, contentType, key string) error {
+	return s.UploadFile(ctx, bytes.NewReader(data), contentType, key)
 }
