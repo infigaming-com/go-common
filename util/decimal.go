@@ -37,6 +37,8 @@ func DecimalSum(nums ...string) (decimal.Decimal, error) {
 
 func NewDecimal(value any) (decimal.Decimal, error) {
 	switch value := value.(type) {
+	case decimal.Decimal:
+		return value, nil
 	case string:
 		return DecimalFromString(value)
 	case int:
