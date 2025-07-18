@@ -33,6 +33,12 @@ func TestNewDecimal(t *testing.T) {
 			expectErr:   false,
 		},
 		{
+			name:        "decimal.Decimal",
+			value:       decimal.NewFromInt(123),
+			expectValue: decimal.NewFromInt(123),
+			expectErr:   false,
+		},
+		{
 			name:        "invalid",
 			value:       "invalid",
 			expectValue: decimal.Zero,
