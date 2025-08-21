@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func createTestFreeCache(t *testing.T) Cache {
+func createTestFreeCache(_ *testing.T) Cache {
 	// Create a 10MB cache for testing
 	cache := freecache.NewCache(10 * 1024 * 1024)
 	return NewFreeCache(cache)
@@ -243,9 +243,12 @@ func TestFreeCache_Gets(t *testing.T) {
 
 		keys := []string{"existing-get-key", "non-existing-get-key"}
 		results, err := cache.Gets(ctx, keys)
-		assert.Error(t, err)
-		assert.Nil(t, results)
-		assert.Equal(t, ErrKeyNotFound, err)
+		assert.NoError(t, err)
+		assert.Len(t, results, 1)
+		assert.Equal(t, "existing-get-value", results["existing-get-key"])
+		// Non-existing key should not be in results
+		_, exists := results["non-existing-get-key"]
+		assert.False(t, exists)
 	})
 
 	t.Run("gets with empty keys slice", func(t *testing.T) {
@@ -262,6 +265,14 @@ func TestFreeCache_Gets(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Len(t, results, 1)
 		assert.Equal(t, "single-value", results["single-key"])
+	})
+
+	t.Run("gets with all non-existing keys", func(t *testing.T) {
+		keys := []string{"non-existing-1", "non-existing-2", "non-existing-3"}
+		results, err := cache.Gets(ctx, keys)
+		assert.NoError(t, err)
+		assert.Empty(t, results)
+		assert.Len(t, results, 0)
 	})
 }
 
