@@ -70,10 +70,10 @@ func (c *freeCache) Gets(ctx context.Context, keys []string) (map[string]string,
 
 	for _, key := range keys {
 		data, err := c.cache.Get([]byte(key))
+		if err == freecache.ErrNotFound {
+			continue
+		}
 		if err != nil {
-			if err == freecache.ErrNotFound {
-				return nil, ErrKeyNotFound
-			}
 			return nil, fmt.Errorf("failed to get key %s: %w", key, err)
 		}
 		results[key] = string(data)
