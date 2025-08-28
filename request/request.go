@@ -14,9 +14,7 @@ import (
 	"maps"
 
 	"github.com/google/uuid"
-	"github.com/infigaming-com/go-common/observability/metrics"
 	"github.com/infigaming-com/go-common/util"
-	"github.com/samber/lo"
 	"go.uber.org/zap"
 )
 
@@ -38,8 +36,6 @@ type requestOption struct {
 	correlationId        string
 	requestTimeout       time.Duration
 	slowRequestThreshold time.Duration
-	metricExporter       *metrics.MetricExporter
-	metricAttributes     map[string]string
 }
 
 type Option interface {
@@ -185,14 +181,6 @@ func WithSlowRequestThreshold(slowRequestThreshold time.Duration) Option {
 	})
 }
 
-func WithMetricExporterAndAttributes(metricExporter *metrics.MetricExporter, attributes map[string]string) Option {
-	return optionFunc(func(option *requestOption) error {
-		option.metricExporter = metricExporter
-		option.metricAttributes = attributes
-		return nil
-	})
-}
-
 func getHttpClient() *http.Client {
 	once.Do(func() {
 		httpClient = &http.Client{
@@ -245,14 +233,6 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 				zap.ByteString("responseBody", responseBody),
 				zap.Duration("duration", time.Since(start)),
 			)
-			if option.metricExporter != nil {
-				attributes := lo.Assign(option.metricAttributes, map[string]string{
-					"method":     method,
-					"url":        requestUrl,
-					"error_type": getErrorType(err),
-				})
-				option.metricExporter.RecordCounter(ctx, "http_request_error", "HTTP request error", "count", 1, attributes)
-			}
 			return
 		}
 
@@ -267,20 +247,6 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 				zap.ByteString("responseBody", responseBody),
 				zap.Duration("duration", time.Since(start)),
 			)
-		}
-
-		if option.metricExporter != nil {
-			attributes := lo.Assign(option.metricAttributes, map[string]string{
-				"method":          method,
-				"url":             requestUrl,
-				"status_code":     fmt.Sprintf("%d", httpStatusCode),
-				"status_category": fmt.Sprintf("%dxx", httpStatusCode/100),
-			})
-			option.metricExporter.RecordCounter(ctx, "http_request_total", "HTTP requests", "count", 1, attributes)
-			if httpStatusCode >= 400 {
-				option.metricExporter.RecordCounter(ctx, "http_request_error", "HTTP request error", "count", 1, attributes)
-			}
-			option.metricExporter.RecordHistogram(ctx, "http_request_duration", "HTTP request duration", "ms", float64(time.Since(start).Milliseconds()), attributes)
 		}
 	}()
 
@@ -381,12 +347,6 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 			zap.ByteString("responseBody", responseBody),
 			zap.Duration("duration", requestDuration),
 		)
-		if option.metricExporter != nil {
-			option.metricExporter.RecordCounter(ctx, "http_request_slow", "Slow HTTP requests", "count", 1, map[string]string{
-				"method": method,
-				"url":    requestUrl,
-			})
-		}
 	}
 
 	return httpStatusCode, responseBody, nil
