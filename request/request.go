@@ -441,33 +441,3 @@ func PostForm(ctx context.Context, requestUrl string, requestBody url.Values, op
 	options = append(options, WithRequestHeaders(defaultHeader), WithRequestFromBody(requestBody))
 	return Request(ctx, http.MethodPost, requestUrl, options...)
 }
-
-func getErrorType(err error) string {
-	if err == nil {
-		return "none"
-	}
-
-	errStr := err.Error()
-	switch {
-	case err == context.DeadlineExceeded:
-		return "timeout"
-	case err == context.Canceled:
-		return "canceled"
-	case err == io.EOF:
-		return "connection_closed"
-	case err == io.ErrUnexpectedEOF:
-		return "unexpected_eof"
-	default:
-		// Check for common network errors
-		if errStr == "connection refused" {
-			return "connection_refused"
-		}
-		if errStr == "no such host" {
-			return "dns_error"
-		}
-		if errStr == "network is unreachable" {
-			return "network_unreachable"
-		}
-		return "unknown"
-	}
-}
