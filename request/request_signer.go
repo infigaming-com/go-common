@@ -33,6 +33,11 @@ type HmacSha256SignerKeys struct {
 	ApiKeySecret    string
 }
 
+type HmacSha256RequestBodySignerKeys struct {
+	RequestSignHeader string
+	Secret            string
+}
+
 type Md5SignerKeys struct {
 	Secret string
 }
@@ -87,6 +92,17 @@ func HmacSha256Signer(requestSigningData *RequestSigningData, keys any) error {
 	(*requestSigningData.RequestHeaders)[hmacSha256SignerKeys.ApiKeyHeader] = hmacSha256SignerKeys.ApiKey
 	signature := util.HmacSha256Hash(canonicalizedMessage, []byte(hmacSha256SignerKeys.ApiKeySecret))
 	(*requestSigningData.RequestHeaders)[hmacSha256SignerKeys.SignatureHeader] = hex.EncodeToString(signature)
+	return nil
+}
+
+// HmacSha256RequestBodySigner is a signer that signs the request body using hmac sha256 which works for softswiss
+func HmacSha256RequestBodySigner(requestSigningData *RequestSigningData, keys any) error {
+	Keys, ok := keys.(HmacSha256RequestBodySignerKeys)
+	if !ok {
+		return fmt.Errorf("invalid signer keys for hmac sha256 signer: %v", keys)
+	}
+	signature := util.HmacSha256Hash(*requestSigningData.RequestBody, []byte(Keys.Secret))
+	(*requestSigningData.RequestHeaders)[Keys.RequestSignHeader] = hex.EncodeToString(signature)
 	return nil
 }
 
