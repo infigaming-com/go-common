@@ -26,9 +26,9 @@ var (
 type requestOption struct {
 	lg                   *zap.Logger
 	debugEnabled         bool
-	queryParams          map[string]string
-	requestHeaders       map[string]string
-	requestBody          []byte
+	queryParams          *map[string]string
+	requestHeaders       *map[string]string
+	requestBody          *[]byte
 	signer               RequestSigner
 	recorder             RequestRecorder
 	signerKeys           any
@@ -49,12 +49,15 @@ func (f optionFunc) apply(option *requestOption) error {
 }
 
 func defaultRequestOption() *requestOption {
+	queryParams := make(map[string]string)
+	requestHeaders := make(map[string]string)
+	requestBody := []byte{}
 	return &requestOption{
 		lg:                   zap.L(),
 		debugEnabled:         false,
-		queryParams:          make(map[string]string),
-		requestHeaders:       make(map[string]string),
-		requestBody:          nil,
+		queryParams:          &queryParams,
+		requestHeaders:       &requestHeaders,
+		requestBody:          &requestBody,
 		signer:               nil,
 		recorder:             nil,
 		signerKeys:           nil,
@@ -81,14 +84,20 @@ func WithDebugEnabled(debugEnabled bool) Option {
 
 func WithQueryParams(queryParams map[string]string) Option {
 	return optionFunc(func(option *requestOption) error {
-		maps.Copy(option.queryParams, queryParams)
+		if option.queryParams == nil {
+			option.queryParams = &map[string]string{}
+		}
+		maps.Copy(*option.queryParams, queryParams)
 		return nil
 	})
 }
 
 func WithRequestHeaders(requestHeaders map[string]string) Option {
 	return optionFunc(func(option *requestOption) error {
-		maps.Copy(option.requestHeaders, requestHeaders)
+		if option.requestHeaders == nil {
+			option.requestHeaders = &map[string]string{}
+		}
+		maps.Copy(*option.requestHeaders, requestHeaders)
 		return nil
 	})
 }
@@ -103,14 +112,15 @@ func WithCorrelationId(correlationIdKey, correlationId string) Option {
 
 func WithRequestBody(requestBody []byte) Option {
 	return optionFunc(func(option *requestOption) error {
-		option.requestBody = requestBody
+		option.requestBody = &requestBody
 		return nil
 	})
 }
 
 func WithRequestFromBody(requestBody url.Values) Option {
 	return optionFunc(func(option *requestOption) error {
-		option.requestBody = []byte(requestBody.Encode())
+		body := []byte(requestBody.Encode())
+		option.requestBody = &body
 		return nil
 	})
 }
@@ -125,7 +135,7 @@ func WithRequestBodyFromJson(requestBody any) Option {
 			)
 			return fmt.Errorf("failed to marshal request body: %w", err)
 		}
-		option.requestBody = jsonBody
+		option.requestBody = &jsonBody
 		return nil
 	})
 }
@@ -140,8 +150,8 @@ func WithJsonAsQueryParamsAndRequestBody(requestBody any) Option {
 			)
 			return fmt.Errorf("failed to generate request data: %w", err)
 		}
-		option.queryParams = queryParams
-		option.requestBody = requestBody
+		option.queryParams = &queryParams
+		option.requestBody = &requestBody
 		return nil
 	})
 }
@@ -202,8 +212,13 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 
 	defer func() {
 		if option.recorder != nil {
-			queryParams, _ := json.Marshal(option.queryParams)
-			requestHeaders, _ := json.Marshal(option.requestHeaders)
+			var queryParams, requestHeaders []byte
+			if option.queryParams != nil {
+				queryParams, _ = json.Marshal(*option.queryParams)
+			}
+			if option.requestHeaders != nil {
+				requestHeaders, _ = json.Marshal(*option.requestHeaders)
+			}
 			errorStr := ""
 			if err != nil {
 				errorStr = err.Error()
@@ -213,7 +228,12 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 				Url:            requestUrl,
 				QueryParams:    string(queryParams),
 				RequestHeaders: string(requestHeaders),
-				RequestBody:    string(option.requestBody),
+				RequestBody: func() string {
+					if option.requestBody != nil {
+						return string(*option.requestBody)
+					}
+					return ""
+				}(),
 				HttpStatusCode: httpStatusCode,
 				ResponseBody:   string(responseBody),
 				Error:          errorStr,
@@ -228,7 +248,12 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 				zap.String("url", requestUrl),
 				zap.Any("queryParams", option.queryParams),
 				zap.Any("requestHeaders", option.requestHeaders),
-				zap.ByteString("requestBody", option.requestBody),
+				zap.ByteString("requestBody", func() []byte {
+					if option.requestBody != nil {
+						return *option.requestBody
+					}
+					return nil
+				}()),
 				zap.Int("httpStatusCode", httpStatusCode),
 				zap.ByteString("responseBody", responseBody),
 				zap.Duration("duration", time.Since(start)),
@@ -242,7 +267,12 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 				zap.String("url", requestUrl),
 				zap.Any("queryParams", option.queryParams),
 				zap.Any("requestHeaders", option.requestHeaders),
-				zap.ByteString("requestBody", option.requestBody),
+				zap.ByteString("requestBody", func() []byte {
+					if option.requestBody != nil {
+						return *option.requestBody
+					}
+					return nil
+				}()),
 				zap.Int("httpStatusCode", httpStatusCode),
 				zap.ByteString("responseBody", responseBody),
 				zap.Duration("duration", time.Since(start)),
@@ -252,12 +282,12 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 
 	// sign the request
 	if option.signer != nil {
-		if err := option.signer(RequestSigningData{
+		if err := option.signer(&RequestSigningData{
 			Method:         method,
 			Url:            requestUrl,
 			QueryParams:    option.queryParams,
 			RequestHeaders: option.requestHeaders,
-			RequestBody:    &option.requestBody,
+			RequestBody:    option.requestBody,
 		}, option.signerKeys); err != nil {
 			option.lg.Error("[HTTP-REQUEST-ERROR: failed to sign request]",
 				zap.Error(err),
@@ -265,7 +295,12 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 				zap.String("url", requestUrl),
 				zap.Any("queryParams", option.queryParams),
 				zap.Any("requestHeaders", option.requestHeaders),
-				zap.ByteString("requestBody", option.requestBody),
+				zap.ByteString("requestBody", func() []byte {
+					if option.requestBody != nil {
+						return *option.requestBody
+					}
+					return nil
+				}()),
 			)
 			return 0, nil, fmt.Errorf("failed to sign request: %w", err)
 		}
@@ -274,20 +309,31 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 	timeoutCtx, cancel := context.WithTimeout(ctx, option.requestTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(timeoutCtx, method, requestUrl, bytes.NewReader(option.requestBody))
+	var bodyReader io.Reader
+	if option.requestBody != nil {
+		bodyReader = bytes.NewReader(*option.requestBody)
+	}
+	req, err := http.NewRequestWithContext(timeoutCtx, method, requestUrl, bodyReader)
 	if err != nil {
 		option.lg.Error("[HTTP-REQUEST-ERROR: failed to create request]",
 			zap.Error(err),
 			zap.String("method", method),
 			zap.String("url", requestUrl),
-			zap.ByteString("requestBody", option.requestBody),
+			zap.ByteString("requestBody", func() []byte {
+				if option.requestBody != nil {
+					return *option.requestBody
+				}
+				return nil
+			}()),
 		)
 		return 0, nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	query := req.URL.Query()
-	for k, v := range option.queryParams {
-		query.Add(k, v)
+	if option.queryParams != nil {
+		for k, v := range *option.queryParams {
+			query.Add(k, v)
+		}
 	}
 	req.URL.RawQuery = query.Encode()
 
@@ -302,8 +348,10 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 		}
 	}
 
-	for k, v := range option.requestHeaders {
-		req.Header.Add(k, v)
+	if option.requestHeaders != nil {
+		for k, v := range *option.requestHeaders {
+			req.Header.Add(k, v)
+		}
 	}
 
 	requestStart := time.Now()
@@ -311,14 +359,24 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 	if err == context.DeadlineExceeded {
 		option.lg.Error("[HTTP-REQUEST-ERROR: request timeout]",
 			zap.Error(err),
-			zap.ByteString("requestBody", option.requestBody),
+			zap.ByteString("requestBody", func() []byte {
+				if option.requestBody != nil {
+					return *option.requestBody
+				}
+				return nil
+			}()),
 		)
 		return 0, nil, fmt.Errorf("request timeout: %w", err)
 	}
 	if err != nil {
 		option.lg.Error("[HTTP-REQUEST-ERROR: failed to send request]",
 			zap.Error(err),
-			zap.ByteString("requestBody", option.requestBody),
+			zap.ByteString("requestBody", func() []byte {
+				if option.requestBody != nil {
+					return *option.requestBody
+				}
+				return nil
+			}()),
 		)
 		return 0, nil, fmt.Errorf("failed to send request: %w", err)
 	}
@@ -331,7 +389,12 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 	if err != nil {
 		option.lg.Error("[HTTP-REQUEST-ERROR: failed to read response body]",
 			zap.Error(err),
-			zap.ByteString("requestBody", option.requestBody),
+			zap.ByteString("requestBody", func() []byte {
+				if option.requestBody != nil {
+					return *option.requestBody
+				}
+				return nil
+			}()),
 		)
 		return 0, nil, fmt.Errorf("failed to read response body: %w", err)
 	}
@@ -342,7 +405,12 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 			zap.String("url", requestUrl),
 			zap.Any("queryParams", option.queryParams),
 			zap.Any("requestHeaders", option.requestHeaders),
-			zap.ByteString("requestBody", option.requestBody),
+			zap.ByteString("requestBody", func() []byte {
+				if option.requestBody != nil {
+					return *option.requestBody
+				}
+				return nil
+			}()),
 			zap.Int("httpStatusCode", httpStatusCode),
 			zap.ByteString("responseBody", responseBody),
 			zap.Duration("duration", requestDuration),
