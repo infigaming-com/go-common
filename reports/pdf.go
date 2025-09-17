@@ -9,16 +9,18 @@ import (
 )
 
 type PDFExporter struct {
-	pdf       *gofpdf.Fpdf
-	headers   []string
-	hasHeader bool
-	rowIndex  int
-	colWidths []float64
-	pageWidth float64
-	margin    float64
-	currentY  float64
+	pdf         *gofpdf.Fpdf
+	headers     []string
+	hasHeader   bool
+	rowIndex    int
+	colWidths   []float64
+	pageWidth   float64
+	margin      float64
+	currentY    float64
+	headerStyle *PDFStyle // Store header style for consistent rendering across pages
 }
 
+// NewPDFExporter creates a new PDF exporter instance
 func NewPDFExporter() *PDFExporter {
 	pdf := gofpdf.New("P", "mm", "A4", "")
 	pdf.AddPage()
@@ -71,7 +73,7 @@ func (e *PDFExporter) WriteHeader(headers []string) error {
 		return fmt.Errorf("previously set column widths length (%d) does not match header length (%d)", len(e.colWidths), len(headers))
 	}
 
-	if e.colWidths == nil || len(e.colWidths) == 0 {
+	if len(e.colWidths) == 0 {
 		availableWidth := e.pageWidth - 2*e.margin
 		colWidth := availableWidth / float64(len(headers))
 		e.colWidths = make([]float64, len(headers))
@@ -101,12 +103,13 @@ func (e *PDFExporter) WriteHeaderWithStyle(headers []string, style *PDFStyle) er
 
 	e.headers = headers
 	e.hasHeader = true
+	e.headerStyle = style // Store header style for consistent rendering across pages
 
 	if e.colWidths != nil && len(e.colWidths) != len(headers) {
 		return fmt.Errorf("previously set column widths length (%d) does not match header length (%d)", len(e.colWidths), len(headers))
 	}
 
-	if e.colWidths == nil || len(e.colWidths) == 0 {
+	if len(e.colWidths) == 0 {
 		availableWidth := e.pageWidth - 2*e.margin
 		colWidth := availableWidth / float64(len(headers))
 		e.colWidths = make([]float64, len(headers))
@@ -162,7 +165,7 @@ func (e *PDFExporter) WriteDataWithStyle(data []string, style *PDFStyle) error {
 }
 
 func (e *PDFExporter) SetColumnWidths(widths []float64) error {
-	if e.headers == nil || len(e.headers) == 0 {
+	if len(e.headers) == 0 {
 		e.colWidths = make([]float64, len(widths))
 		copy(e.colWidths, widths)
 		return nil
@@ -273,7 +276,6 @@ func (e *PDFExporter) drawHeaderWithStyle(headers []string, style *PDFStyle) {
 }
 
 func (e *PDFExporter) drawDataRow(data []string, style *PDFStyle) {
-	// 先计算当前行的实际高度
 	maxHeight := 8.0
 	for i, value := range data {
 		cellHeight := e.calculateCellHeight(value, e.colWidths[i]-4, 6)
@@ -282,7 +284,6 @@ func (e *PDFExporter) drawDataRow(data []string, style *PDFStyle) {
 		}
 	}
 
-	// 检查是否需要分页（基于实际行高）
 	e.checkPageBreakWithHeight(maxHeight)
 
 	if style != nil {
@@ -315,32 +316,19 @@ func (e *PDFExporter) drawDataRow(data []string, style *PDFStyle) {
 	e.rowIndex++
 }
 
-func (e *PDFExporter) checkPageBreak() {
-	// A4页面高度约为297mm，减去上下边距
-	pageHeight := 297.0
-	availableHeight := pageHeight - 2*e.margin
-
-	// 如果当前Y坐标加上预估的行高会超出页面，则添加新页面
-	estimatedRowHeight := 15.0 // 预估行高
-	if e.currentY+estimatedRowHeight > availableHeight {
-		e.AddPage()
-		// 在新页面上重新绘制表头
-		if e.hasHeader {
-			e.drawHeaderWithStyle(e.headers, CreatePDFHeaderStyle(NewColor(79, 129, 189)))
-		}
-	}
-}
-
 func (e *PDFExporter) checkPageBreakWithHeight(rowHeight float64) {
-	// A4页面高度约为297mm，减去上下边距
+	// A4 page height is approximately 297mm, minus top and bottom margins
 	pageHeight := 297.0
 	availableHeight := pageHeight - 2*e.margin
 
-	// 如果当前Y坐标加上实际行高会超出页面，则添加新页面
+	// If current Y coordinate plus actual row height would exceed page, add new page
 	if e.currentY+rowHeight > availableHeight {
 		e.AddPage()
-		// 在新页面上重新绘制表头
-		if e.hasHeader {
+		// Redraw header on new page using stored header style
+		if e.hasHeader && e.headerStyle != nil {
+			e.drawHeaderWithStyle(e.headers, e.headerStyle)
+		} else if e.hasHeader {
+			// Fallback to default header style if no custom style was stored
 			e.drawHeaderWithStyle(e.headers, CreatePDFHeaderStyle(NewColor(79, 129, 189)))
 		}
 	}
@@ -388,32 +376,87 @@ type Color struct {
 	R, G, B int
 }
 
-func CreatePDFHeaderStyle(backgroundColor Color) *PDFStyle {
+// CreatePDFHeaderStyle creates a header style with the specified background color
+// backgroundColor can be either a Color struct or a hex color string (e.g., "#E0E0E0")
+func CreatePDFHeaderStyle(backgroundColor any) *PDFStyle {
+	var bgColor Color
+
+	switch v := backgroundColor.(type) {
+	case Color:
+		bgColor = v
+	case string:
+		// Try to parse as hex color
+		parsedColor, err := ParseHexColor(v)
+		if err != nil {
+			// Fallback to default color if parsing fails
+			bgColor = Color{R: 240, G: 240, B: 240}
+		} else {
+			bgColor = parsedColor
+		}
+	default:
+		// Fallback to default color for unsupported types
+		bgColor = Color{R: 240, G: 240, B: 240}
+	}
+
 	return &PDFStyle{
 		FontFamily:      "Arial",
 		FontStyle:       "B",
 		FontSize:        12,
-		BackgroundColor: backgroundColor,
+		BackgroundColor: bgColor,
 		TextColor:       Color{R: 0, G: 0, B: 0},
 	}
 }
 
-func CreatePDFDataStyle() *PDFStyle {
+// CreatePDFDataStyle creates a data row style with optional background color
+// backgroundColor can be either a Color struct or a hex color string (e.g., "#FFFFFF")
+func CreatePDFDataStyle(backgroundColor ...interface{}) *PDFStyle {
+	var bgColor Color = Color{R: 255, G: 255, B: 255} // Default white
+
+	if len(backgroundColor) > 0 {
+		switch v := backgroundColor[0].(type) {
+		case Color:
+			bgColor = v
+		case string:
+			// Try to parse as hex color
+			parsedColor, err := ParseHexColor(v)
+			if err == nil {
+				bgColor = parsedColor
+			}
+		}
+	}
+
 	return &PDFStyle{
 		FontFamily:      "Arial",
 		FontStyle:       "",
 		FontSize:        10,
-		BackgroundColor: Color{R: 255, G: 255, B: 255},
+		BackgroundColor: bgColor,
 		TextColor:       Color{R: 0, G: 0, B: 0},
 	}
 }
 
-func CreatePDFAlternatingDataStyle() *PDFStyle {
+// CreatePDFAlternatingDataStyle creates an alternating data row style with optional background color
+// backgroundColor can be either a Color struct or a hex color string (e.g., "#F8F8F8")
+func CreatePDFAlternatingDataStyle(backgroundColor ...interface{}) *PDFStyle {
+	var bgColor Color = Color{R: 248, G: 248, B: 248} // Default light gray
+
+	if len(backgroundColor) > 0 {
+		switch v := backgroundColor[0].(type) {
+		case Color:
+			bgColor = v
+		case string:
+			// Try to parse as hex color
+			parsedColor, err := ParseHexColor(v)
+			if err == nil {
+				bgColor = parsedColor
+			}
+		}
+	}
+
 	return &PDFStyle{
 		FontFamily:      "Arial",
 		FontStyle:       "",
 		FontSize:        10,
-		BackgroundColor: Color{R: 248, G: 248, B: 248},
+		BackgroundColor: bgColor,
 		TextColor:       Color{R: 0, G: 0, B: 0},
 	}
 }
@@ -422,6 +465,7 @@ func NewColor(r, g, b int) Color {
 	return Color{R: r, G: g, B: b}
 }
 
+// ParseHexColor parses a hex color string (e.g., "#E0E0E0" or "E0E0E0") and returns a Color
 func ParseHexColor(hex string) (Color, error) {
 	hex = strings.TrimPrefix(hex, "#")
 	if len(hex) != 6 {
