@@ -661,3 +661,226 @@ func TestPDFExporter_PageBreak(t *testing.T) {
 	t.Logf("- Long descriptions that should wrap")
 	t.Logf("- Multiple pages of content")
 }
+
+func TestPDFExporter_HexColorAndConsistentHeader(t *testing.T) {
+	filename := "hex_color_consistent_header_test.pdf"
+
+	exporter := NewPDFExporter()
+
+	headers := []string{"ID", "Name", "Description", "Status"}
+
+	columnWidths := []float64{1, 2, 4, 1.5}
+	err := exporter.SetColumnWidths(columnWidths)
+	if err != nil {
+		t.Fatalf("Failed to set column widths: %v", err)
+	}
+
+	// Test direct hex color support
+	headerStyle := CreatePDFHeaderStyle("#FF6B6B") // Direct hex color - bright red
+	err = exporter.WriteHeaderWithStyle(headers, headerStyle)
+	if err != nil {
+		t.Fatalf("Failed to write header: %v", err)
+	}
+
+	// Create enough data to force page break and test consistent header styling
+	largeData := make([][]string, 0)
+	for i := 1; i <= 30; i++ {
+		row := []string{
+			fmt.Sprintf("ID%03d", i),
+			fmt.Sprintf("User %d", i),
+			fmt.Sprintf("This is a very long description for user %d that contains multiple lines of text to test page breaking functionality and consistent header styling across pages.", i),
+			"Active",
+		}
+		largeData = append(largeData, row)
+	}
+
+	dataStyle := CreatePDFDataStyle()
+	altStyle := CreatePDFAlternatingDataStyle()
+	for i, row := range largeData {
+		if i%2 == 0 {
+			err = exporter.WriteDataWithStyle(row, dataStyle)
+		} else {
+			err = exporter.WriteDataWithStyle(row, altStyle)
+		}
+		if err != nil {
+			t.Fatalf("Failed to write data row %d: %v", i, err)
+		}
+	}
+
+	err = exporter.Save(filename)
+	if err != nil {
+		t.Fatalf("Failed to save PDF file: %v", err)
+	}
+
+	fileInfo, err := os.Stat(filename)
+	if err != nil {
+		t.Fatalf("Failed to get file info: %v", err)
+	}
+
+	if fileInfo.Size() == 0 {
+		t.Error("PDF file is empty")
+	}
+
+	t.Logf("Hex color and consistent header test - PDF file: %s (size: %d bytes)", filename, fileInfo.Size())
+	t.Logf("Generated PDF file with:")
+	t.Logf("- Hex color support (#FF6B6B - bright red)")
+	t.Logf("- %d data rows to test page breaking", len(largeData))
+	t.Logf("- Consistent header styling across all pages")
+	t.Logf("- Multiple pages of content")
+}
+
+func TestPDFExporter_ColorShowcase(t *testing.T) {
+	filename := "color_showcase_test.pdf"
+
+	exporter := NewPDFExporter()
+
+	headers := []string{"Color", "Hex Code", "Description", "Sample"}
+
+	columnWidths := []float64{2, 2, 3, 1}
+	err := exporter.SetColumnWidths(columnWidths)
+	if err != nil {
+		t.Fatalf("Failed to set column widths: %v", err)
+	}
+
+	// Test various hex colors
+	colors := []struct {
+		hex    string
+		desc   string
+		sample string
+	}{
+		{"#FF6B6B", "Bright Red", "Red"},
+		{"#4ECDC4", "Turquoise", "Blue"},
+		{"#45B7D1", "Sky Blue", "Blue"},
+		{"#96CEB4", "Mint Green", "Green"},
+		{"#FFEAA7", "Soft Yellow", "Yellow"},
+		{"#DDA0DD", "Plum", "Purple"},
+		{"#98D8C8", "Seafoam", "Green"},
+		{"#F7DC6F", "Golden", "Yellow"},
+	}
+
+	// Create header with a nice gradient-like color
+	headerColor, err := ParseHexColor("#6C5CE7") // Purple
+	if err != nil {
+		t.Fatalf("Failed to parse header color: %v", err)
+	}
+
+	headerStyle := CreatePDFHeaderStyle(headerColor)
+	err = exporter.WriteHeaderWithStyle(headers, headerStyle)
+	if err != nil {
+		t.Fatalf("Failed to write header: %v", err)
+	}
+
+	// Add data rows with different colors
+	for i, color := range colors {
+		hexColor, err := ParseHexColor(color.hex)
+		if err != nil {
+			t.Fatalf("Failed to parse color %s: %v", color.hex, err)
+		}
+
+		// Create a custom style for each row
+		rowStyle := &PDFStyle{
+			FontFamily:      "Arial",
+			FontStyle:       "",
+			FontSize:        10,
+			BackgroundColor: hexColor,
+			TextColor:       Color{R: 0, G: 0, B: 0}, // Black text for readability
+		}
+
+		row := []string{
+			fmt.Sprintf("Color %d", i+1),
+			color.hex,
+			color.desc,
+			color.sample,
+		}
+
+		err = exporter.WriteDataWithStyle(row, rowStyle)
+		if err != nil {
+			t.Fatalf("Failed to write data row: %v", err)
+		}
+	}
+
+	err = exporter.Save(filename)
+	if err != nil {
+		t.Fatalf("Failed to save PDF file: %v", err)
+	}
+
+	fileInfo, err := os.Stat(filename)
+	if err != nil {
+		t.Fatalf("Failed to get file info: %v", err)
+	}
+
+	if fileInfo.Size() == 0 {
+		t.Error("PDF file is empty")
+	}
+
+	t.Logf("Color showcase test - PDF file: %s (size: %d bytes)", filename, fileInfo.Size())
+	t.Logf("Generated PDF file with:")
+	t.Logf("- Purple header (#6C5CE7)")
+	t.Logf("- %d different colored rows", len(colors))
+	t.Logf("- Various hex color examples")
+	t.Logf("- Color name and hex code display")
+}
+
+func TestPDFExporter_DirectHexColorSupport(t *testing.T) {
+	filename := "direct_hex_color_test.pdf"
+
+	exporter := NewPDFExporter()
+
+	headers := []string{"Method", "Color Input", "Result", "Notes"}
+
+	columnWidths := []float64{2, 2, 2, 2}
+	err := exporter.SetColumnWidths(columnWidths)
+	if err != nil {
+		t.Fatalf("Failed to set column widths: %v", err)
+	}
+
+	// Test direct hex color support in header
+	headerStyle := CreatePDFHeaderStyle("#4ECDC4") // Direct hex color
+	err = exporter.WriteHeaderWithStyle(headers, headerStyle)
+	if err != nil {
+		t.Fatalf("Failed to write header: %v", err)
+	}
+
+	// Test data with different color input methods
+	testData := [][]string{
+		{"Color Struct", "NewColor(255, 107, 107)", "Red", "Traditional method"},
+		{"Hex String", "#FF6B6B", "Red", "Direct hex support"},
+		{"Hex No #", "96CEB4", "Green", "Hex without # prefix"},
+		{"Default", "", "White", "No color specified"},
+	}
+
+	// Test different ways to create styles
+	styles := []*PDFStyle{
+		CreatePDFDataStyle(NewColor(255, 107, 107)), // Color struct
+		CreatePDFDataStyle("#FF6B6B"),               // Hex string
+		CreatePDFDataStyle("96CEB4"),                // Hex without #
+		CreatePDFDataStyle(),                        // Default
+	}
+
+	for i, row := range testData {
+		err = exporter.WriteDataWithStyle(row, styles[i])
+		if err != nil {
+			t.Fatalf("Failed to write data row: %v", err)
+		}
+	}
+
+	err = exporter.Save(filename)
+	if err != nil {
+		t.Fatalf("Failed to save PDF file: %v", err)
+	}
+
+	fileInfo, err := os.Stat(filename)
+	if err != nil {
+		t.Fatalf("Failed to get file info: %v", err)
+	}
+
+	if fileInfo.Size() == 0 {
+		t.Error("PDF file is empty")
+	}
+
+	t.Logf("Direct hex color support test - PDF file: %s (size: %d bytes)", filename, fileInfo.Size())
+	t.Logf("Generated PDF file with:")
+	t.Logf("- Header with direct hex color (#4ECDC4)")
+	t.Logf("- Data rows with different color input methods")
+	t.Logf("- Support for Color struct, hex strings, and default colors")
+}
