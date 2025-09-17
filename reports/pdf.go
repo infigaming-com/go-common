@@ -16,6 +16,7 @@ type PDFExporter struct {
 	colWidths []float64
 	pageWidth float64
 	margin    float64
+	currentY  float64
 }
 
 func NewPDFExporter() *PDFExporter {
@@ -33,6 +34,7 @@ func NewPDFExporter() *PDFExporter {
 		rowIndex:  0,
 		pageWidth: pageWidth,
 		margin:    margin,
+		currentY:  margin,
 	}
 }
 
@@ -51,6 +53,7 @@ func NewPDFExporterToFile(filename string) (*PDFExporter, error) {
 		rowIndex:  0,
 		pageWidth: pageWidth,
 		margin:    margin,
+		currentY:  margin,
 	}
 
 	return exporter, nil
@@ -202,7 +205,7 @@ func (e *PDFExporter) drawHeader(headers []string) {
 	e.pdf.SetFont("Arial", "B", 12)
 	e.pdf.SetFillColor(240, 240, 240)
 
-	y := e.margin + float64(e.rowIndex)*8
+	y := e.currentY
 	x := e.margin
 
 	maxHeight := 8.0
@@ -226,11 +229,8 @@ func (e *PDFExporter) drawHeader(headers []string) {
 		x += e.colWidths[i]
 	}
 
-	rows := int(maxHeight / 8)
-	if rows < 1 {
-		rows = 1
-	}
-	e.rowIndex += rows
+	e.currentY += maxHeight
+	e.rowIndex++
 }
 
 func (e *PDFExporter) drawHeaderWithStyle(headers []string, style *PDFStyle) {
@@ -244,7 +244,7 @@ func (e *PDFExporter) drawHeaderWithStyle(headers []string, style *PDFStyle) {
 		e.pdf.SetTextColor(0, 0, 0)
 	}
 
-	y := e.margin + float64(e.rowIndex)*8
+	y := e.currentY
 	x := e.margin
 
 	maxHeight := 8.0
@@ -268,11 +268,8 @@ func (e *PDFExporter) drawHeaderWithStyle(headers []string, style *PDFStyle) {
 		x += e.colWidths[i]
 	}
 
-	rows := int(maxHeight / 8)
-	if rows < 1 {
-		rows = 1
-	}
-	e.rowIndex += rows
+	e.currentY += maxHeight
+	e.rowIndex++
 }
 
 func (e *PDFExporter) drawDataRow(data []string, style *PDFStyle) {
@@ -286,7 +283,7 @@ func (e *PDFExporter) drawDataRow(data []string, style *PDFStyle) {
 		e.pdf.SetTextColor(0, 0, 0)
 	}
 
-	y := e.margin + float64(e.rowIndex)*8
+	y := e.currentY
 	x := e.margin
 
 	maxHeight := 8.0
@@ -310,16 +307,14 @@ func (e *PDFExporter) drawDataRow(data []string, style *PDFStyle) {
 		x += e.colWidths[i]
 	}
 
-	rows := int(maxHeight / 8)
-	if rows < 1 {
-		rows = 1
-	}
-	e.rowIndex += rows
+	e.currentY += maxHeight
+	e.rowIndex++
 }
 
 func (e *PDFExporter) AddPage() {
 	e.pdf.AddPage()
 	e.rowIndex = 0
+	e.currentY = e.margin
 }
 
 func (e *PDFExporter) Save(filename string) error {
