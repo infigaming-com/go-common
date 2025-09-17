@@ -1,6 +1,7 @@
 package reports
 
 import (
+	"fmt"
 	"os"
 	"testing"
 )
@@ -532,4 +533,131 @@ func TestPDFExporter_MultiCellDemo(t *testing.T) {
 	t.Logf("- Custom column widths to test wrapping")
 	t.Logf("- Alternating row colors")
 	t.Logf("- Special characters and symbols")
+}
+
+func TestPDFExporter_HeaderMultiLine(t *testing.T) {
+	filename := "header_multiline_test.pdf"
+
+	exporter := NewPDFExporter()
+
+	// 创建需要换行的表头
+	headers := []string{
+		"ID",
+		"Very Long Header Name That Should Wrap to Multiple Lines",
+		"Another Very Long Header That Will Definitely Need to Wrap to Multiple Lines in the PDF",
+		"Short",
+	}
+
+	// 设置较窄的列宽来强制换行
+	columnWidths := []float64{1, 2, 3, 1}
+	err := exporter.SetColumnWidths(columnWidths)
+	if err != nil {
+		t.Fatalf("Failed to set column widths: %v", err)
+	}
+
+	headerStyle := CreatePDFHeaderStyle(NewColor(79, 129, 189))
+	err = exporter.WriteHeaderWithStyle(headers, headerStyle)
+	if err != nil {
+		t.Fatalf("Failed to write header: %v", err)
+	}
+
+	// 添加一些数据行来验证表头高度是否正确
+	testData := [][]string{
+		{"1", "Data 1", "This is some test data", "A"},
+		{"2", "Data 2", "More test data here", "B"},
+		{"3", "Data 3", "Even more test data", "C"},
+	}
+
+	dataStyle := CreatePDFDataStyle()
+	for _, row := range testData {
+		err = exporter.WriteDataWithStyle(row, dataStyle)
+		if err != nil {
+			t.Fatalf("Failed to write data row: %v", err)
+		}
+	}
+
+	err = exporter.Save(filename)
+	if err != nil {
+		t.Fatalf("Failed to save PDF file: %v", err)
+	}
+
+	fileInfo, err := os.Stat(filename)
+	if err != nil {
+		t.Fatalf("Failed to get file info: %v", err)
+	}
+
+	if fileInfo.Size() == 0 {
+		t.Error("PDF file is empty")
+	}
+
+	t.Logf("Header multi-line test - PDF file: %s (size: %d bytes)", filename, fileInfo.Size())
+	t.Logf("Generated PDF file with:")
+	t.Logf("- Multi-line headers that should wrap properly")
+	t.Logf("- %d data rows to verify header height is correct", len(testData))
+	t.Logf("- Narrow column widths to force text wrapping")
+}
+
+func TestPDFExporter_PageBreak(t *testing.T) {
+	filename := "page_break_test.pdf"
+
+	exporter := NewPDFExporter()
+
+	headers := []string{"ID", "Name", "Description", "Status"}
+
+	columnWidths := []float64{1, 2, 4, 1.5}
+	err := exporter.SetColumnWidths(columnWidths)
+	if err != nil {
+		t.Fatalf("Failed to set column widths: %v", err)
+	}
+
+	headerStyle := CreatePDFHeaderStyle(NewColor(79, 129, 189))
+	err = exporter.WriteHeaderWithStyle(headers, headerStyle)
+	if err != nil {
+		t.Fatalf("Failed to write header: %v", err)
+	}
+
+	// 创建足够多的数据行来强制分页
+	largeData := make([][]string, 0)
+	for i := 1; i <= 50; i++ {
+		row := []string{
+			fmt.Sprintf("ID%03d", i),
+			fmt.Sprintf("User %d", i),
+			fmt.Sprintf("This is a very long description for user %d that contains multiple lines of text to test page breaking functionality. The description should wrap properly and when we reach the end of the page, it should automatically create a new page and continue with the remaining data.", i),
+			"Active",
+		}
+		largeData = append(largeData, row)
+	}
+
+	dataStyle := CreatePDFDataStyle()
+	altStyle := CreatePDFAlternatingDataStyle()
+	for i, row := range largeData {
+		if i%2 == 0 {
+			err = exporter.WriteDataWithStyle(row, dataStyle)
+		} else {
+			err = exporter.WriteDataWithStyle(row, altStyle)
+		}
+		if err != nil {
+			t.Fatalf("Failed to write data row %d: %v", i, err)
+		}
+	}
+
+	err = exporter.Save(filename)
+	if err != nil {
+		t.Fatalf("Failed to save PDF file: %v", err)
+	}
+
+	fileInfo, err := os.Stat(filename)
+	if err != nil {
+		t.Fatalf("Failed to get file info: %v", err)
+	}
+
+	if fileInfo.Size() == 0 {
+		t.Error("PDF file is empty")
+	}
+
+	t.Logf("Page break test - PDF file: %s (size: %d bytes)", filename, fileInfo.Size())
+	t.Logf("Generated PDF file with:")
+	t.Logf("- %d data rows to test page breaking", len(largeData))
+	t.Logf("- Long descriptions that should wrap")
+	t.Logf("- Multiple pages of content")
 }
