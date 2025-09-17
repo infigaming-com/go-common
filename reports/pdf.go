@@ -273,6 +273,18 @@ func (e *PDFExporter) drawHeaderWithStyle(headers []string, style *PDFStyle) {
 }
 
 func (e *PDFExporter) drawDataRow(data []string, style *PDFStyle) {
+	// 先计算当前行的实际高度
+	maxHeight := 8.0
+	for i, value := range data {
+		cellHeight := e.calculateCellHeight(value, e.colWidths[i]-4, 6)
+		if cellHeight > maxHeight {
+			maxHeight = cellHeight
+		}
+	}
+
+	// 检查是否需要分页（基于实际行高）
+	e.checkPageBreakWithHeight(maxHeight)
+
 	if style != nil {
 		e.pdf.SetFont(style.FontFamily, style.FontStyle, style.FontSize)
 		e.pdf.SetFillColor(style.BackgroundColor.R, style.BackgroundColor.G, style.BackgroundColor.B)
@@ -285,14 +297,6 @@ func (e *PDFExporter) drawDataRow(data []string, style *PDFStyle) {
 
 	y := e.currentY
 	x := e.margin
-
-	maxHeight := 8.0
-	for i, value := range data {
-		cellHeight := e.calculateCellHeight(value, e.colWidths[i]-4, 6)
-		if cellHeight > maxHeight {
-			maxHeight = cellHeight
-		}
-	}
 
 	for i := range data {
 		e.pdf.Rect(x, y, e.colWidths[i], maxHeight, "F")
@@ -309,6 +313,37 @@ func (e *PDFExporter) drawDataRow(data []string, style *PDFStyle) {
 
 	e.currentY += maxHeight
 	e.rowIndex++
+}
+
+func (e *PDFExporter) checkPageBreak() {
+	// A4页面高度约为297mm，减去上下边距
+	pageHeight := 297.0
+	availableHeight := pageHeight - 2*e.margin
+
+	// 如果当前Y坐标加上预估的行高会超出页面，则添加新页面
+	estimatedRowHeight := 15.0 // 预估行高
+	if e.currentY+estimatedRowHeight > availableHeight {
+		e.AddPage()
+		// 在新页面上重新绘制表头
+		if e.hasHeader {
+			e.drawHeaderWithStyle(e.headers, CreatePDFHeaderStyle(NewColor(79, 129, 189)))
+		}
+	}
+}
+
+func (e *PDFExporter) checkPageBreakWithHeight(rowHeight float64) {
+	// A4页面高度约为297mm，减去上下边距
+	pageHeight := 297.0
+	availableHeight := pageHeight - 2*e.margin
+
+	// 如果当前Y坐标加上实际行高会超出页面，则添加新页面
+	if e.currentY+rowHeight > availableHeight {
+		e.AddPage()
+		// 在新页面上重新绘制表头
+		if e.hasHeader {
+			e.drawHeaderWithStyle(e.headers, CreatePDFHeaderStyle(NewColor(79, 129, 189)))
+		}
+	}
 }
 
 func (e *PDFExporter) AddPage() {
