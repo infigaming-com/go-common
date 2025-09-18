@@ -231,6 +231,19 @@ func (f *MapFormatter) Format(value interface{}) (string, error) {
 	return mappedValue, nil
 }
 
+// PrefixSuffixFormatter adds prefix and/or suffix to values
+type PrefixSuffixFormatter struct {
+	Prefix string
+	Suffix string
+}
+
+func (f *PrefixSuffixFormatter) Format(value interface{}) (string, error) {
+	if value == nil {
+		return f.Prefix + f.Suffix, nil
+	}
+	return f.Prefix + fmt.Sprintf("%v", value) + f.Suffix, nil
+}
+
 // OriginalFormatter returns values as-is without any formatting
 type OriginalFormatter struct{}
 

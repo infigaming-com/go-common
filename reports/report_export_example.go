@@ -179,8 +179,12 @@ func formatCustomerRecordsData(records []CustomerRecord, timezone string) ([][]s
 		Add("TransactionType", &MapFormatter{
 			Mappings: TransactionTypeDisplayNames,
 		}).
-		Add("UserId", nil). // nil means OriginalFormatter
-		Add("TransactionId", nil).
+		Add("UserId", &PrefixSuffixFormatter{
+			Prefix: "UID-",
+		}). // Add prefix to User ID
+		Add("TransactionId", &PrefixSuffixFormatter{
+			Suffix: "-TX",
+		}). // Add suffix to Transaction ID
 		Add("Currency", nil).
 		AddWithContext("AmountChanged", amountFormatter).  // Use context for dynamic currency
 		AddWithContext("BeforeBalance", balanceFormatter). // Use context for dynamic currency
