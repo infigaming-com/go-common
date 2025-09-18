@@ -21,6 +21,7 @@ type DeploymentInfo struct {
 	Namespace string            `json:"namespace"`
 	Replicas  int32             `json:"replicas"`
 	Ready     int32             `json:"ready"`
+	App       string            `json:"app,omitempty"`
 	Labels    map[string]string `json:"labels"`
 	Pods      []PodInfo         `json:"pods"`
 }
@@ -135,11 +136,28 @@ func (k *K8sClient) GetDeploymentAndPods(ctx context.Context, options ...GetDepl
 			return DeploymentInfo{}
 		}
 
+		// Extract app label if it exists, otherwise use deployment name prefix
+		appLabel := ""
+		if deployment.Labels != nil {
+			if app, exists := deployment.Labels["app"]; exists {
+				appLabel = app
+			}
+		}
+		// If no app label, extract from deployment name (e.g., "wallet-deploy" -> "wallet")
+		if appLabel == "" {
+			if idx := strings.Index(deployment.Name, "-"); idx > 0 {
+				appLabel = deployment.Name[:idx]
+			} else {
+				appLabel = deployment.Name
+			}
+		}
+
 		return DeploymentInfo{
 			Name:      deployment.Name,
 			Namespace: deployment.Namespace,
 			Replicas:  *deployment.Spec.Replicas,
 			Ready:     deployment.Status.ReadyReplicas,
+			App:       appLabel,
 			Labels:    deployment.Labels,
 			Pods:      pods,
 		}

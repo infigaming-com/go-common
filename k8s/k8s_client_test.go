@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -35,6 +36,7 @@ func TestK8sClientRealCluster(t *testing.T) {
 		fmt.Printf("Deployment %d:\n", i+1)
 		fmt.Printf("  Name: %s\n", deployment.Name)
 		fmt.Printf("  Namespace: %s\n", deployment.Namespace)
+		fmt.Printf("  App: %s\n", deployment.App)
 		fmt.Printf("  Replicas: %d\n", deployment.Replicas)
 		fmt.Printf("  Ready: %d\n", deployment.Ready)
 		fmt.Printf("  Labels: %v\n", deployment.Labels)
@@ -211,6 +213,9 @@ func TestGetDeploymentAndPodsWithOptions(t *testing.T) {
 			if deployment.Labels["app"] != "game" {
 				t.Errorf("Expected deployment with app=game label, got %v", deployment.Labels)
 			}
+			if deployment.App != "game" {
+				t.Errorf("Expected deployment.App to be 'game', got '%s'", deployment.App)
+			}
 		}
 	})
 
@@ -237,6 +242,9 @@ func TestGetDeploymentAndPodsWithOptions(t *testing.T) {
 			if deployment.Labels["app"] != "payment" {
 				t.Errorf("Expected deployment with app=payment label, got %v", deployment.Labels)
 			}
+			if deployment.App != "payment" {
+				t.Errorf("Expected deployment.App to be 'payment', got '%s'", deployment.App)
+			}
 		}
 	})
 
@@ -254,4 +262,52 @@ func TestGetDeploymentAndPodsWithOptions(t *testing.T) {
 			t.Logf("Successfully retrieved %d deployments", len(deployments))
 		}
 	})
+}
+
+func TestAppLabelFallback(t *testing.T) {
+	// Skip this test unless explicitly running integration tests
+	if testing.Short() {
+		t.Skip("Skipping integration test")
+	}
+
+	// Create K8s client
+	client, err := NewK8sClient()
+	if err != nil {
+		t.Fatalf("Failed to create K8s client: %v", err)
+	}
+
+	ctx := context.Background()
+	deployments, err := client.GetDeploymentAndPods(ctx)
+	if err != nil {
+		t.Fatalf("Failed to get deployments and pods: %v", err)
+	}
+
+	// Test the app label fallback logic
+	for _, deployment := range deployments {
+		expectedApp := ""
+
+		// Check if deployment has app label
+		if deployment.Labels != nil {
+			if app, exists := deployment.Labels["app"]; exists {
+				expectedApp = app
+			}
+		}
+
+		// If no app label, should extract from deployment name
+		if expectedApp == "" {
+			if idx := strings.Index(deployment.Name, "-"); idx > 0 {
+				expectedApp = deployment.Name[:idx]
+			} else {
+				expectedApp = deployment.Name
+			}
+		}
+
+		// Verify the App field matches our expected value
+		if deployment.App != expectedApp {
+			t.Errorf("Deployment %s: expected App='%s', got App='%s'",
+				deployment.Name, expectedApp, deployment.App)
+		}
+	}
+
+	t.Logf("App label fallback test passed for %d deployments", len(deployments))
 }
