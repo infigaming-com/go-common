@@ -151,7 +151,7 @@ func formatCustomerRecordsData(records []CustomerRecord, timezone string) ([][]s
 	amountFormatter := &CurrencyAmountFormatter{
 		ShowSign:                true,
 		DefaultDecimalPlaces:    2,
-		DefaultCommaSeparator:   ",",
+		DefaultThousandsSeparator:   ",",
 		DefaultDecimalSeparator: ".",
 		CurrencyMap:             currencyMap,
 		GetCurrency: func(item interface{}) string {
@@ -162,7 +162,7 @@ func formatCustomerRecordsData(records []CustomerRecord, timezone string) ([][]s
 	balanceFormatter := &CurrencyAmountFormatter{
 		ShowSign:                false,
 		DefaultDecimalPlaces:    2,
-		DefaultCommaSeparator:   ",",
+		DefaultThousandsSeparator:   ",",
 		DefaultDecimalSeparator: ".",
 		CurrencyMap:             currencyMap,
 		GetCurrency: func(item interface{}) string {

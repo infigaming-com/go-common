@@ -89,7 +89,7 @@ type Currency struct {
 	Code             string
 	Symbol           string
 	DecimalPlaces    int32
-	CommaSeparator   string
+	ThousandsSeparator   string
 	DecimalSeparator string
 }
 
@@ -97,7 +97,7 @@ type Currency struct {
 type CurrencyAmountFormatter struct {
 	ShowSign                bool
 	DefaultDecimalPlaces    int32  // Default decimal places if currency not found
-	DefaultCommaSeparator   string // Default thousand separator, e.g., "," for 100,000 or "." for 100.000
+	DefaultThousandsSeparator   string // Default thousand separator, e.g., "," for 100,000 or "." for 100.000
 	DefaultDecimalSeparator string // Default decimal separator, e.g., "." for 100.00 or "," for 100,00
 
 	// Dynamic currency support
@@ -107,14 +107,14 @@ type CurrencyAmountFormatter struct {
 
 func (f *CurrencyAmountFormatter) Format(value interface{}) (string, error) {
 	// Use default settings when no context available
-	return f.formatAmount(value, f.DefaultDecimalPlaces, f.DefaultCommaSeparator, f.DefaultDecimalSeparator)
+	return f.formatAmount(value, f.DefaultDecimalPlaces, f.DefaultThousandsSeparator, f.DefaultDecimalSeparator)
 }
 
 // FormatWithContext formats amount using currency-specific settings if available
 func (f *CurrencyAmountFormatter) FormatWithContext(value interface{}, context interface{}) (string, error) {
 	// Start with defaults
 	decimalPlaces := f.DefaultDecimalPlaces
-	commaSep := f.DefaultCommaSeparator
+	commaSep := f.DefaultThousandsSeparator
 	decimalSep := f.DefaultDecimalSeparator
 
 	// Override with currency-specific settings if available
@@ -124,8 +124,8 @@ func (f *CurrencyAmountFormatter) FormatWithContext(value interface{}, context i
 			if currency, exists := f.CurrencyMap[currencyCode]; exists && currency != nil {
 				decimalPlaces = currency.DecimalPlaces
 				// Only override separators if explicitly set
-				if currency.CommaSeparator != "" {
-					commaSep = currency.CommaSeparator
+				if currency.ThousandsSeparator != "" {
+					commaSep = currency.ThousandsSeparator
 				}
 				if currency.DecimalSeparator != "" {
 					decimalSep = currency.DecimalSeparator
