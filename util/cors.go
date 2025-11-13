@@ -8,7 +8,7 @@ import "strings"
 // 2. 支持精确匹配
 // 3. 支持 "https://*.example.com" 模糊匹配
 // 4. 支持日志输出（可选）
-func makeAllowedOriginValidator(allowedOrigins []string) func(origin string) bool {
+func MakeAllowedOriginValidator(allowedOrigins []string) func(origin string) bool {
 	// 是否允许所有
 	for _, o := range allowedOrigins {
 		if o == "*" {
