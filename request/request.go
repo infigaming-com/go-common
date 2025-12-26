@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,6 +37,7 @@ type requestOption struct {
 	correlationId        string
 	requestTimeout       time.Duration
 	slowRequestThreshold time.Duration
+	maxRetries           int
 }
 
 type Option interface {
@@ -191,6 +193,19 @@ func WithSlowRequestThreshold(slowRequestThreshold time.Duration) Option {
 	})
 }
 
+// WithRetry enables retry with specified max attempts.
+// Default is 0 (no retry). If maxRetries > 0, the request will be retried
+// up to maxRetries times on transient errors (timeout, connection refused, etc.)
+func WithRetry(maxRetries int) Option {
+	return optionFunc(func(option *requestOption) error {
+		if maxRetries < 0 {
+			maxRetries = 0
+		}
+		option.maxRetries = maxRetries
+		return nil
+	})
+}
+
 func getHttpClient() *http.Client {
 	once.Do(func() {
 		httpClient = &http.Client{
@@ -198,6 +213,20 @@ func getHttpClient() *http.Client {
 		}
 	})
 	return httpClient
+}
+
+// isRetryableError checks if the error is a transient error that can be retried
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "context deadline exceeded") ||
+		strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "i/o timeout") ||
+		strings.Contains(errStr, "no such host") ||
+		strings.Contains(errStr, "network is unreachable")
 }
 
 func Request(ctx context.Context, method string, requestUrl string, options ...Option) (httpStatusCode int, responseBody []byte, err error) {
@@ -306,6 +335,54 @@ func Request(ctx context.Context, method string, requestUrl string, options ...O
 		}
 	}
 
+	// Retry loop: attempt = 1 is the initial attempt, subsequent attempts are retries
+	maxAttempts := option.maxRetries + 1
+	var lastErr error
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		// Backoff before retry (not on first attempt)
+		if attempt > 1 {
+			backoff := time.Duration(attempt-1) * time.Second
+			option.lg.Info("[HTTP-REQUEST-RETRY]",
+				zap.Int("attempt", attempt),
+				zap.Int("maxAttempts", maxAttempts),
+				zap.Duration("backoff", backoff),
+				zap.String("method", method),
+				zap.String("url", requestUrl),
+			)
+
+			select {
+			case <-ctx.Done():
+				return 0, nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+
+		httpStatusCode, responseBody, err = doRequest(ctx, method, requestUrl, option)
+		if err == nil {
+			return httpStatusCode, responseBody, nil
+		}
+
+		// Check if error is retryable and we have more attempts
+		if !isRetryableError(err) || attempt == maxAttempts {
+			return httpStatusCode, responseBody, err
+		}
+
+		lastErr = err
+		option.lg.Warn("[HTTP-REQUEST-RETRYABLE-ERROR]",
+			zap.Error(err),
+			zap.Int("attempt", attempt),
+			zap.Int("maxAttempts", maxAttempts),
+			zap.String("method", method),
+			zap.String("url", requestUrl),
+		)
+	}
+
+	return 0, nil, fmt.Errorf("max retries exceeded: %w", lastErr)
+}
+
+// doRequest performs a single HTTP request attempt
+func doRequest(ctx context.Context, method string, requestUrl string, option *requestOption) (httpStatusCode int, responseBody []byte, err error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, option.requestTimeout)
 	defer cancel()
 
