@@ -10,19 +10,40 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// TrackRequest carries all session info from the middleware.
+type TrackRequest struct {
+	UserID             int64
+	RealOperatorID     int64  // computed "active" operator
+	OperatorID         int64  // individual operator level (0 if not operator type)
+	CompanyOperatorID  int64  // company level (0 if below company)
+	RetailerOperatorID int64  // retailer level (0 if below retailer)
+	SystemOperatorID   int64  // system level
+	OperatorType       string // "operator" | "company" | "retailer" | "system"
+	IP                 string
+	UserAgent          string
+	Country            string
+	LoginMethod        string
+}
+
 // ChangeEvent contains information about detected session activity changes.
 type ChangeEvent struct {
-	UserID      int64
-	OperatorID  int64
-	Triggers    []string // e.g. ["daily_visit", "ip_change", "device_change"]
-	IP          string
-	PrevIP      string
-	UserAgent   string
-	UAHash      string
-	PrevUAHash  string
-	Country     string
-	PrevCountry string
-	Timestamp   int64
+	UserID             int64
+	OperatorID         int64    // = RealOperatorID for backward compat
+	RealOperatorID     int64
+	CompanyOperatorID  int64
+	RetailerOperatorID int64
+	SystemOperatorID   int64
+	OperatorType       string
+	LoginMethod        string
+	Triggers           []string // e.g. ["daily_visit", "ip_change", "device_change"]
+	IP                 string
+	PrevIP             string
+	UserAgent          string
+	UAHash             string
+	PrevUAHash         string
+	Country            string
+	PrevCountry        string
+	Timestamp          int64
 }
 
 // OnChangeFunc is called asynchronously when a change is detected.
@@ -79,23 +100,23 @@ func New(redisClient *redis.Client, onChange OnChangeFunc, opts ...Option) *Trac
 
 // Track records a session activity for the given user. It is safe to call
 // concurrently from multiple goroutines.
-func (t *Tracker) Track(ctx context.Context, userID, operatorID int64, ip, userAgent, country string) {
-	uaHash := hashUA(userAgent)
+func (t *Tracker) Track(ctx context.Context, req *TrackRequest) {
+	uaHash := hashUA(req.UserAgent)
 	date := time.Now().UTC().Format("2006-01-02")
 
 	// L1 lookup
-	if v, ok := t.l1.Load(userID); ok {
+	if v, ok := t.l1.Load(req.UserID); ok {
 		entry := v.(*l1Entry)
 		if time.Now().Before(entry.expiry) &&
 			entry.date == date &&
-			entry.ip == ip &&
+			entry.ip == req.IP &&
 			entry.uaHash == uaHash {
 			return // no change
 		}
 	}
 
 	// L2 lookup
-	redisKey := fmt.Sprintf("%s:%d", t.redisKeyPrefix, userID)
+	redisKey := fmt.Sprintf("%s:%d", t.redisKeyPrefix, req.UserID)
 	cached, err := t.redisClient.HGetAll(ctx, redisKey).Result()
 
 	var triggers []string
@@ -113,7 +134,7 @@ func (t *Tracker) Track(ctx context.Context, userID, operatorID int64, ip, userA
 		if cachedDate != date {
 			triggers = append(triggers, "daily_visit")
 		}
-		if prevIP != "" && prevIP != ip {
+		if prevIP != "" && prevIP != req.IP {
 			triggers = append(triggers, "ip_change")
 		}
 		if prevUAHash != "" && prevUAHash != uaHash {
@@ -122,10 +143,10 @@ func (t *Tracker) Track(ctx context.Context, userID, operatorID int64, ip, userA
 
 		// If L2 exists but nothing changed, just refresh L1 and return.
 		if len(triggers) == 0 {
-			t.l1.Store(userID, &l1Entry{
-				ip:      ip,
+			t.l1.Store(req.UserID, &l1Entry{
+				ip:      req.IP,
 				uaHash:  uaHash,
-				country: country,
+				country: req.Country,
 				date:    date,
 				expiry:  time.Now().Add(t.l1TTL),
 			})
@@ -134,19 +155,19 @@ func (t *Tracker) Track(ctx context.Context, userID, operatorID int64, ip, userA
 	}
 
 	// Update L1
-	t.l1.Store(userID, &l1Entry{
-		ip:      ip,
+	t.l1.Store(req.UserID, &l1Entry{
+		ip:      req.IP,
 		uaHash:  uaHash,
-		country: country,
+		country: req.Country,
 		date:    date,
 		expiry:  time.Now().Add(t.l1TTL),
 	})
 
 	// Update L2
 	t.redisClient.HSet(ctx, redisKey, map[string]interface{}{
-		"ip":      ip,
+		"ip":      req.IP,
 		"ua_hash": uaHash,
-		"country": country,
+		"country": req.Country,
 		"date":    date,
 	})
 	t.redisClient.Expire(ctx, redisKey, t.l2TTL)
@@ -154,17 +175,23 @@ func (t *Tracker) Track(ctx context.Context, userID, operatorID int64, ip, userA
 	// Fire callback asynchronously
 	if t.onChange != nil && len(triggers) > 0 {
 		event := &ChangeEvent{
-			UserID:      userID,
-			OperatorID:  operatorID,
-			Triggers:    triggers,
-			IP:          ip,
-			PrevIP:      prevIP,
-			UserAgent:   userAgent,
-			UAHash:      uaHash,
-			PrevUAHash:  prevUAHash,
-			Country:     country,
-			PrevCountry: prevCountry,
-			Timestamp:   time.Now().UnixMilli(),
+			UserID:             req.UserID,
+			OperatorID:         req.RealOperatorID,
+			RealOperatorID:     req.RealOperatorID,
+			CompanyOperatorID:  req.CompanyOperatorID,
+			RetailerOperatorID: req.RetailerOperatorID,
+			SystemOperatorID:   req.SystemOperatorID,
+			OperatorType:       req.OperatorType,
+			LoginMethod:        req.LoginMethod,
+			Triggers:           triggers,
+			IP:                 req.IP,
+			PrevIP:             prevIP,
+			UserAgent:          req.UserAgent,
+			UAHash:             uaHash,
+			PrevUAHash:         prevUAHash,
+			Country:            req.Country,
+			PrevCountry:        prevCountry,
+			Timestamp:          time.Now().UnixMilli(),
 		}
 		go t.onChange(event)
 	}
