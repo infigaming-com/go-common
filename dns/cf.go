@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/cloudflare/cloudflare-go"
 )
 
 type cfDNSProvider struct {
-	api *cloudflare.API
+	api         *cloudflare.API
+	zoneIDCache sync.Map // rootDomain -> zoneID cache
 }
 
 func NewCfDNSProvider(apiToken string) (DNSProvider, error) {
@@ -27,7 +29,7 @@ func (p *cfDNSProvider) CreateRecord(ctx context.Context, record DNSRecord) erro
 		return fmt.Errorf("fail to extract root domain: %w", err)
 	}
 
-	zoneId, err := p.api.ZoneIDByName(rootDomain)
+	zoneId, err := p.getZoneID(rootDomain)
 	if err != nil {
 		return fmt.Errorf("fail to get zone id: %w", err)
 	}
@@ -50,6 +52,20 @@ func (p *cfDNSProvider) CreateRecord(ctx context.Context, record DNSRecord) erro
 	}
 
 	return nil
+}
+
+// getZoneID returns cached zone ID or fetches and caches it.
+// Zone IDs are immutable (domain-to-zone mapping never changes), so permanent caching is safe.
+func (p *cfDNSProvider) getZoneID(rootDomain string) (string, error) {
+	if cached, ok := p.zoneIDCache.Load(rootDomain); ok {
+		return cached.(string), nil
+	}
+	zoneId, err := p.api.ZoneIDByName(rootDomain)
+	if err != nil {
+		return "", err
+	}
+	p.zoneIDCache.Store(rootDomain, zoneId)
+	return zoneId, nil
 }
 
 func extractRootDomain(subdomain string) (string, error) {
