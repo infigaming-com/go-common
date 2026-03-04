@@ -22,19 +22,17 @@ type TrackRequest struct {
 	IP                 string
 	UserAgent          string
 	Country            string
-	LoginMethod        string
 }
 
 // ChangeEvent contains information about detected session activity changes.
 type ChangeEvent struct {
 	UserID             int64
-	OperatorID         int64    // = RealOperatorID for backward compat
+	OperatorID         int64 // = RealOperatorID for backward compat
 	RealOperatorID     int64
 	CompanyOperatorID  int64
 	RetailerOperatorID int64
 	SystemOperatorID   int64
 	OperatorType       string
-	LoginMethod        string
 	Triggers           []string // e.g. ["daily_visit", "ip_change", "device_change"]
 	IP                 string
 	PrevIP             string
@@ -182,7 +180,6 @@ func (t *Tracker) Track(ctx context.Context, req *TrackRequest) {
 			RetailerOperatorID: req.RetailerOperatorID,
 			SystemOperatorID:   req.SystemOperatorID,
 			OperatorType:       req.OperatorType,
-			LoginMethod:        req.LoginMethod,
 			Triggers:           triggers,
 			IP:                 req.IP,
 			PrevIP:             prevIP,
