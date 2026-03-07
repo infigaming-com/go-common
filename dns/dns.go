@@ -14,8 +14,10 @@ type DNSRecord struct {
 
 type DNSProvider interface {
 	CreateRecord(ctx context.Context, record DNSRecord) error
+	DeleteRecord(ctx context.Context, domain string) error
 }
 
 var (
 	ErrRecordAlreadyExists = errors.New("record already exists")
+	ErrRecordNotFound      = errors.New("record not found")
 )

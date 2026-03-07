@@ -54,6 +54,41 @@ func (p *cfDNSProvider) CreateRecord(ctx context.Context, record DNSRecord) erro
 	return nil
 }
 
+func (p *cfDNSProvider) DeleteRecord(ctx context.Context, domain string) error {
+	rootDomain, err := extractRootDomain(domain)
+	if err != nil {
+		return fmt.Errorf("fail to extract root domain: %w", err)
+	}
+
+	zoneId, err := p.getZoneID(rootDomain)
+	if err != nil {
+		return fmt.Errorf("fail to get zone id: %w", err)
+	}
+
+	// List DNS records matching the domain name
+	records, _, err := p.api.ListDNSRecords(
+		ctx,
+		cloudflare.ZoneIdentifier(zoneId),
+		cloudflare.ListDNSRecordsParams{Name: domain},
+	)
+	if err != nil {
+		return fmt.Errorf("fail to list dns records: %w", err)
+	}
+
+	if len(records) == 0 {
+		return ErrRecordNotFound
+	}
+
+	// Delete all matching records
+	for _, record := range records {
+		if err := p.api.DeleteDNSRecord(ctx, cloudflare.ZoneIdentifier(zoneId), record.ID); err != nil {
+			return fmt.Errorf("fail to delete dns record %s: %w", record.ID, err)
+		}
+	}
+
+	return nil
+}
+
 // getZoneID returns cached zone ID or fetches and caches it.
 // Zone IDs are immutable (domain-to-zone mapping never changes), so permanent caching is safe.
 func (p *cfDNSProvider) getZoneID(rootDomain string) (string, error) {
