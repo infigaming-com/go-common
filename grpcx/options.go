@@ -46,20 +46,51 @@ func ResilientDialOptions() []grpc.DialOption {
 //
 // It configures:
 //   - EnforcementPolicy: allows client pings every 5s and pings without active streams.
-//   - ServerParameters: max connection age 5m with 10s grace for graceful drain during
-//     rolling deployments; idle timeout 15m.
-func ResilientServerOptions() []grpc.ServerOption {
+//   - Server keepalive: pings every 30s with 5s timeout to detect dead clients.
+//
+// This is safe to deploy before clients upgrade — old clients that don't send
+// keepalive pings are unaffected by the enforcement policy.
+//
+// For optional connection age management (e.g. graceful drain during rolling
+// deploys), use WithMaxConnectionAge.
+func ResilientServerOptions(opts ...ServerOption) []grpc.ServerOption {
+	cfg := &serverConfig{}
+	for _, o := range opts {
+		o(cfg)
+	}
+
+	params := keepalive.ServerParameters{
+		MaxConnectionIdle: 15 * time.Minute,
+		Time:              30 * time.Second,
+		Timeout:           5 * time.Second,
+	}
+	if cfg.maxConnectionAge > 0 {
+		params.MaxConnectionAge = cfg.maxConnectionAge
+		params.MaxConnectionAgeGrace = 10 * time.Second
+	}
+
 	return []grpc.ServerOption{
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             5 * time.Second,
 			PermitWithoutStream: true,
 		}),
-		grpc.KeepaliveParams(keepalive.ServerParameters{
-			MaxConnectionAge:      5 * time.Minute,
-			MaxConnectionAgeGrace: 10 * time.Second,
-			MaxConnectionIdle:     15 * time.Minute,
-			Time:                  30 * time.Second,
-			Timeout:               5 * time.Second,
-		}),
+		grpc.KeepaliveParams(params),
+	}
+}
+
+// ServerOption configures optional server parameters.
+type ServerOption func(*serverConfig)
+
+type serverConfig struct {
+	maxConnectionAge time.Duration
+}
+
+// WithMaxConnectionAge sets the maximum connection age before the server
+// sends GOAWAY. Use this only after all clients have been upgraded with
+// ResilientDialOptions (which includes retry), so they can handle the
+// transient reconnection gracefully.
+func WithMaxConnectionAge(d time.Duration) ServerOption {
+	return func(c *serverConfig) {
+		c.maxConnectionAge = d
 	}
 }
