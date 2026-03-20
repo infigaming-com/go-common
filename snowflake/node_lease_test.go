@@ -177,3 +177,96 @@ func TestNodeLease_HolderIdentity(t *testing.T) {
 	holder := buildHolder("my-service")
 	assert.Contains(t, holder, "my-service:")
 }
+
+func TestNodeLease_SelfHeal_ReclaimAfterExpiry(t *testing.T) {
+	mr, client := setupMiniredis(t)
+
+	nl, err := AcquireNodeLease(context.Background(), client,
+		WithServiceName("test-svc"),
+		WithLeaseTTL(3*time.Second),
+	)
+	require.NoError(t, err)
+	defer func() { _ = nl.Release(context.Background()) }()
+
+	originalNodeID := nl.NodeID()
+
+	// Simulate Redis outage: delete the lease key to mimic TTL expiry
+	mr.Del("snowflake:node:" + strconv.FormatInt(originalNodeID, 10))
+
+	// Wait for heartbeat to fire and self-heal (TTL/3 = 1s)
+	time.Sleep(1500 * time.Millisecond)
+
+	// Lease should have self-healed by reclaiming the same node ID
+	assert.True(t, nl.IsHealthy(), "lease should be healthy after self-healing")
+	assert.Equal(t, originalNodeID, nl.NodeID(), "should reclaim the same node ID")
+}
+
+func TestNodeLease_SelfHeal_ClaimNewNode(t *testing.T) {
+	mr, client := setupMiniredis(t)
+
+	nl, err := AcquireNodeLease(context.Background(), client,
+		WithServiceName("test-svc"),
+		WithLeaseTTL(3*time.Second),
+	)
+	require.NoError(t, err)
+	defer func() { _ = nl.Release(context.Background()) }()
+
+	originalNodeID := nl.NodeID()
+
+	// Simulate: key expired AND another holder took our node
+	leaseKey := "snowflake:node:" + strconv.FormatInt(originalNodeID, 10)
+	mr.Set(leaseKey, "other-holder")
+	mr.SetTTL(leaseKey, 30*time.Second)
+
+	// Track node ID changes
+	var newNodeIDFromCallback int64
+	nl.setNodeIDUpdater(func(id int64) {
+		newNodeIDFromCallback = id
+	})
+
+	// Wait for heartbeat to detect and self-heal
+	time.Sleep(1500 * time.Millisecond)
+
+	assert.True(t, nl.IsHealthy(), "lease should be healthy after claiming new node")
+	assert.NotEqual(t, originalNodeID, nl.NodeID(), "should have a different node ID")
+	assert.Equal(t, nl.NodeID(), newNodeIDFromCallback, "callback should be invoked with new node ID")
+}
+
+func TestNodeLease_SelfHeal_GeneratorNodeIDUpdate(t *testing.T) {
+	mr, client := setupMiniredis(t)
+
+	nl, err := AcquireNodeLease(context.Background(), client,
+		WithServiceName("test-svc"),
+		WithLeaseTTL(3*time.Second),
+	)
+	require.NoError(t, err)
+	defer func() { _ = nl.Release(context.Background()) }()
+
+	gen, err := NewGenerator(nl.NodeID(), WithLeaseHealthCheck(nl))
+	require.NoError(t, err)
+
+	originalNodeID := nl.NodeID()
+
+	// Generate an ID before self-healing
+	id1, err := gen.NextID()
+	require.NoError(t, err)
+	_, nodeFromID1, _ := DecomposeID(id1)
+	assert.Equal(t, originalNodeID, nodeFromID1)
+
+	// Simulate: another holder stole our node
+	leaseKey := "snowflake:node:" + strconv.FormatInt(originalNodeID, 10)
+	mr.Set(leaseKey, "other-holder")
+	mr.SetTTL(leaseKey, 30*time.Second)
+
+	// Wait for self-healing
+	time.Sleep(1500 * time.Millisecond)
+
+	assert.True(t, nl.IsHealthy())
+
+	// Generator should use the new node ID
+	id2, err := gen.NextID()
+	require.NoError(t, err)
+	_, nodeFromID2, _ := DecomposeID(id2)
+	assert.Equal(t, nl.NodeID(), nodeFromID2, "generator should use the new node ID")
+	assert.NotEqual(t, originalNodeID, nodeFromID2, "new ID should use different node")
+}

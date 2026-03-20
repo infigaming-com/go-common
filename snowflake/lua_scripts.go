@@ -48,3 +48,29 @@ if current == ARGV[1] then
 end
 return 0
 `
+
+// renewOrReclaimLua tries to renew an existing lease, or reclaim it if the
+// key has expired (SET NX). This enables self-healing after transient Redis
+// outages that cause the key to expire.
+// KEYS[1]: lease key
+// ARGV[1]: expected holder
+// ARGV[2]: TTL in seconds
+// Returns:
+//
+//	1 = renewed (holder matched, TTL extended)
+//	2 = reclaimed (key was gone, SET NX succeeded)
+//	0 = failed (different holder owns the key)
+const renewOrReclaimLua = `
+local current = redis.call("GET", KEYS[1])
+if current == ARGV[1] then
+    redis.call("EXPIRE", KEYS[1], tonumber(ARGV[2]))
+    return 1
+end
+if current == false then
+    local ok = redis.call("SET", KEYS[1], ARGV[1], "NX", "EX", tonumber(ARGV[2]))
+    if ok then
+        return 2
+    end
+end
+return 0
+`

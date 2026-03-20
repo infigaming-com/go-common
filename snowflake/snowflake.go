@@ -46,14 +46,25 @@ func NewGenerator(nodeID int64, opts ...Option) (*Generator, error) {
 		opt(o)
 	}
 
-	return &Generator{
+	g := &Generator{
 		epoch:         customEpochMs,
 		nodeID:        nodeID,
 		maxClockDrift: o.maxClockDrift,
 		leaseCheck:    o.leaseCheck,
 		metrics:       o.metrics,
 		now:           o.now,
-	}, nil
+	}
+
+	// Register callback so the lease can update our node ID during self-healing
+	if g.leaseCheck != nil {
+		g.leaseCheck.setNodeIDUpdater(func(newID int64) {
+			g.mu.Lock()
+			g.nodeID = newID
+			g.mu.Unlock()
+		})
+	}
+
+	return g, nil
 }
 
 // NextID generates a single unique int64 ID.

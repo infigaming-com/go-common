@@ -10,17 +10,19 @@ type MetricsHook interface {
 	OnLeaseRenewed()
 	OnLeaseRenewFail()
 	OnLeaseExpired()
+	OnLeaseReclaimed(nodeID int64)
 	OnLeaseReleased()
 }
 
 // noopMetrics is the default no-op implementation.
 type noopMetrics struct{}
 
-func (noopMetrics) OnIDGenerated(int)     {}
-func (noopMetrics) OnClockRollback()      {}
-func (noopMetrics) OnSequenceOverflow()   {}
-func (noopMetrics) OnLeaseAcquired(int64) {}
-func (noopMetrics) OnLeaseRenewed()       {}
-func (noopMetrics) OnLeaseRenewFail()     {}
-func (noopMetrics) OnLeaseExpired()       {}
-func (noopMetrics) OnLeaseReleased()      {}
+func (noopMetrics) OnIDGenerated(int)      {}
+func (noopMetrics) OnClockRollback()       {}
+func (noopMetrics) OnSequenceOverflow()    {}
+func (noopMetrics) OnLeaseAcquired(int64)  {}
+func (noopMetrics) OnLeaseRenewed()        {}
+func (noopMetrics) OnLeaseRenewFail()      {}
+func (noopMetrics) OnLeaseExpired()        {}
+func (noopMetrics) OnLeaseReclaimed(int64) {}
+func (noopMetrics) OnLeaseReleased()       {}
