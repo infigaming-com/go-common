@@ -22,7 +22,16 @@ type TrackRequest struct {
 	IP                 string
 	UserAgent          string
 	Country            string
+	IsPwa              bool // whether the request originates from a PWA session
 }
+
+// Trigger name constants for session activity change detection.
+const (
+	TriggerDailyVisit   = "daily_visit"
+	TriggerIPChange     = "ip_change"
+	TriggerDeviceChange = "device_change"
+	TriggerPwaChange    = "pwa_change"
+)
 
 // ChangeEvent contains information about detected session activity changes.
 type ChangeEvent struct {
@@ -33,7 +42,7 @@ type ChangeEvent struct {
 	RetailerOperatorID int64
 	SystemOperatorID   int64
 	OperatorType       string
-	Triggers           []string // e.g. ["daily_visit", "ip_change", "device_change"]
+	Triggers           []string // e.g. ["daily_visit", "ip_change", "device_change", "pwa_change"]
 	IP                 string
 	PrevIP             string
 	UserAgent          string
@@ -41,6 +50,8 @@ type ChangeEvent struct {
 	PrevUAHash         string
 	Country            string
 	PrevCountry        string
+	IsPwa              bool
+	PrevIsPwa          bool
 	Timestamp          int64
 }
 
@@ -52,6 +63,7 @@ type l1Entry struct {
 	uaHash  string
 	country string
 	date    string
+	isPwa   bool
 	expiry  time.Time
 }
 
@@ -108,7 +120,8 @@ func (t *Tracker) Track(ctx context.Context, req *TrackRequest) {
 		if time.Now().Before(entry.expiry) &&
 			entry.date == date &&
 			entry.ip == req.IP &&
-			entry.uaHash == uaHash {
+			entry.uaHash == uaHash &&
+			entry.isPwa == req.IsPwa {
 			return // no change
 		}
 	}
@@ -119,24 +132,30 @@ func (t *Tracker) Track(ctx context.Context, req *TrackRequest) {
 
 	var triggers []string
 	var prevIP, prevUAHash, prevCountry string
+	var prevIsPwa bool
 
 	if err != nil || len(cached) == 0 {
 		// No L2 entry — first time or expired
-		triggers = append(triggers, "daily_visit")
+		triggers = append(triggers, TriggerDailyVisit)
 	} else {
 		prevIP = cached["ip"]
 		prevUAHash = cached["ua_hash"]
 		prevCountry = cached["country"]
 		cachedDate := cached["date"]
+		prevIsPwa = cached["is_pwa"] == "1"
 
 		if cachedDate != date {
-			triggers = append(triggers, "daily_visit")
+			triggers = append(triggers, TriggerDailyVisit)
 		}
 		if prevIP != "" && prevIP != req.IP {
-			triggers = append(triggers, "ip_change")
+			triggers = append(triggers, TriggerIPChange)
 		}
 		if prevUAHash != "" && prevUAHash != uaHash {
-			triggers = append(triggers, "device_change")
+			triggers = append(triggers, TriggerDeviceChange)
+		}
+		// Detect PWA status change (only when there is a previous state)
+		if cached["is_pwa"] != "" && prevIsPwa != req.IsPwa {
+			triggers = append(triggers, TriggerPwaChange)
 		}
 
 		// If L2 exists but nothing changed, just refresh L1 and return.
@@ -146,6 +165,7 @@ func (t *Tracker) Track(ctx context.Context, req *TrackRequest) {
 				uaHash:  uaHash,
 				country: req.Country,
 				date:    date,
+				isPwa:   req.IsPwa,
 				expiry:  time.Now().Add(t.l1TTL),
 			})
 			return
@@ -158,6 +178,7 @@ func (t *Tracker) Track(ctx context.Context, req *TrackRequest) {
 		uaHash:  uaHash,
 		country: req.Country,
 		date:    date,
+		isPwa:   req.IsPwa,
 		expiry:  time.Now().Add(t.l1TTL),
 	})
 
@@ -167,6 +188,7 @@ func (t *Tracker) Track(ctx context.Context, req *TrackRequest) {
 		"ua_hash": uaHash,
 		"country": req.Country,
 		"date":    date,
+		"is_pwa":  boolToRedis(req.IsPwa),
 	})
 	t.redisClient.Expire(ctx, redisKey, t.l2TTL)
 
@@ -188,6 +210,8 @@ func (t *Tracker) Track(ctx context.Context, req *TrackRequest) {
 			PrevUAHash:         prevUAHash,
 			Country:            req.Country,
 			PrevCountry:        prevCountry,
+			IsPwa:              req.IsPwa,
+			PrevIsPwa:          prevIsPwa,
 			Timestamp:          time.Now().UnixMilli(),
 		}
 		go t.onChange(event)
@@ -225,4 +249,11 @@ func (t *Tracker) cleanupLoop(interval time.Duration) {
 func hashUA(ua string) string {
 	h := sha256.Sum256([]byte(ua))
 	return fmt.Sprintf("%x", h[:8]) // 16 hex chars
+}
+
+func boolToRedis(b bool) string {
+	if b {
+		return "1"
+	}
+	return "0"
 }
