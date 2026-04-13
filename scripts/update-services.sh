@@ -20,7 +20,7 @@ echo "Updating go-common to: $HASH"
 echo "Scanning for services in: $PARENT_DIR"
 echo ""
 
-for dir in "$PARENT_DIR"/meepo-*-service "$PARENT_DIR"/wt-meepo-*-service*; do
+for dir in "$PARENT_DIR"/meepo-*-service; do
     [ -d "$dir" ] || continue
     [ -f "$dir/go.mod" ] || continue
 
