@@ -22,7 +22,7 @@ type TrackRequest struct {
 	IP                 string
 	UserAgent          string
 	Country            string
-	ClientSource       string // login method from the request (e.g. "pwa")
+	ClientSource       string // client source from the request (e.g. "pwa")
 }
 
 // Trigger name constants for session activity change detection.
@@ -153,7 +153,7 @@ func (t *Tracker) Track(ctx context.Context, req *TrackRequest) {
 		if prevUAHash != "" && prevUAHash != uaHash {
 			triggers = append(triggers, TriggerDeviceChange)
 		}
-		// Detect login method change (only when there is a previous state)
+		// Detect client source change (only when there is a previous state)
 		if cached["client_source"] != "" && prevClientSource != req.ClientSource {
 			triggers = append(triggers, TriggerClientSourceChange)
 		}
