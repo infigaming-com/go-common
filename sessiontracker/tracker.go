@@ -22,7 +22,16 @@ type TrackRequest struct {
 	IP                 string
 	UserAgent          string
 	Country            string
+	ClientSource       string // client source from the request (e.g. "pwa")
 }
+
+// Trigger name constants for session activity change detection.
+const (
+	TriggerDailyVisit         = "daily_visit"
+	TriggerIPChange           = "ip_change"
+	TriggerDeviceChange       = "device_change"
+	TriggerClientSourceChange = "client_source_change"
+)
 
 // ChangeEvent contains information about detected session activity changes.
 type ChangeEvent struct {
@@ -33,7 +42,7 @@ type ChangeEvent struct {
 	RetailerOperatorID int64
 	SystemOperatorID   int64
 	OperatorType       string
-	Triggers           []string // e.g. ["daily_visit", "ip_change", "device_change"]
+	Triggers           []string // e.g. ["daily_visit", "ip_change", "device_change", "client_source_change"]
 	IP                 string
 	PrevIP             string
 	UserAgent          string
@@ -41,6 +50,8 @@ type ChangeEvent struct {
 	PrevUAHash         string
 	Country            string
 	PrevCountry        string
+	ClientSource       string
+	PrevClientSource   string
 	Timestamp          int64
 }
 
@@ -48,11 +59,12 @@ type ChangeEvent struct {
 type OnChangeFunc func(event *ChangeEvent)
 
 type l1Entry struct {
-	ip      string
-	uaHash  string
-	country string
-	date    string
-	expiry  time.Time
+	ip           string
+	uaHash       string
+	country      string
+	date         string
+	clientSource string
+	expiry       time.Time
 }
 
 // Tracker provides two-level caching (L1 in-process, L2 Redis) for session
@@ -108,7 +120,8 @@ func (t *Tracker) Track(ctx context.Context, req *TrackRequest) {
 		if time.Now().Before(entry.expiry) &&
 			entry.date == date &&
 			entry.ip == req.IP &&
-			entry.uaHash == uaHash {
+			entry.uaHash == uaHash &&
+			entry.clientSource == req.ClientSource {
 			return // no change
 		}
 	}
@@ -119,34 +132,41 @@ func (t *Tracker) Track(ctx context.Context, req *TrackRequest) {
 
 	var triggers []string
 	var prevIP, prevUAHash, prevCountry string
+	var prevClientSource string
 
 	if err != nil || len(cached) == 0 {
 		// No L2 entry — first time or expired
-		triggers = append(triggers, "daily_visit")
+		triggers = append(triggers, TriggerDailyVisit)
 	} else {
 		prevIP = cached["ip"]
 		prevUAHash = cached["ua_hash"]
 		prevCountry = cached["country"]
 		cachedDate := cached["date"]
+		prevClientSource = cached["client_source"]
 
 		if cachedDate != date {
-			triggers = append(triggers, "daily_visit")
+			triggers = append(triggers, TriggerDailyVisit)
 		}
 		if prevIP != "" && prevIP != req.IP {
-			triggers = append(triggers, "ip_change")
+			triggers = append(triggers, TriggerIPChange)
 		}
 		if prevUAHash != "" && prevUAHash != uaHash {
-			triggers = append(triggers, "device_change")
+			triggers = append(triggers, TriggerDeviceChange)
+		}
+		// Detect client source change (only when there is a previous state)
+		if cached["client_source"] != "" && prevClientSource != req.ClientSource {
+			triggers = append(triggers, TriggerClientSourceChange)
 		}
 
 		// If L2 exists but nothing changed, just refresh L1 and return.
 		if len(triggers) == 0 {
 			t.l1.Store(req.UserID, &l1Entry{
-				ip:      req.IP,
-				uaHash:  uaHash,
-				country: req.Country,
-				date:    date,
-				expiry:  time.Now().Add(t.l1TTL),
+				ip:           req.IP,
+				uaHash:       uaHash,
+				country:      req.Country,
+				date:         date,
+				clientSource: req.ClientSource,
+				expiry:       time.Now().Add(t.l1TTL),
 			})
 			return
 		}
@@ -154,19 +174,21 @@ func (t *Tracker) Track(ctx context.Context, req *TrackRequest) {
 
 	// Update L1
 	t.l1.Store(req.UserID, &l1Entry{
-		ip:      req.IP,
-		uaHash:  uaHash,
-		country: req.Country,
-		date:    date,
-		expiry:  time.Now().Add(t.l1TTL),
+		ip:           req.IP,
+		uaHash:       uaHash,
+		country:      req.Country,
+		date:         date,
+		clientSource: req.ClientSource,
+		expiry:       time.Now().Add(t.l1TTL),
 	})
 
 	// Update L2
 	t.redisClient.HSet(ctx, redisKey, map[string]interface{}{
-		"ip":      req.IP,
-		"ua_hash": uaHash,
-		"country": req.Country,
-		"date":    date,
+		"ip":            req.IP,
+		"ua_hash":       uaHash,
+		"country":       req.Country,
+		"date":          date,
+		"client_source": req.ClientSource,
 	})
 	t.redisClient.Expire(ctx, redisKey, t.l2TTL)
 
@@ -188,6 +210,8 @@ func (t *Tracker) Track(ctx context.Context, req *TrackRequest) {
 			PrevUAHash:         prevUAHash,
 			Country:            req.Country,
 			PrevCountry:        prevCountry,
+			ClientSource:       req.ClientSource,
+			PrevClientSource:   prevClientSource,
 			Timestamp:          time.Now().UnixMilli(),
 		}
 		go t.onChange(event)
