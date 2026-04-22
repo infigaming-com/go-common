@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -10,17 +11,34 @@ func TestSplitSchemaTable(t *testing.T) {
 		fq         string
 		wantSchema string
 		wantTable  string
+		wantErr    string // substring expected in error message; empty means no error
 	}{
-		{"schema and table", "user.users", "user", "users"},
-		{"quoted-style ignored", `user.archived_users`, "user", "archived_users"},
-		{"no dot falls back to public", "users", "public", "users"},
-		{"empty string", "", "public", ""},
-		{"multiple dots uses last", "db.user.users", "db.user", "users"},
-		{"trailing dot -> empty table", "user.", "user", ""},
+		{"schema and table", "user.users", "user", "users", ""},
+		{"archived table", "user.archived_users", "user", "archived_users", ""},
+		{"no dot falls back to public", "users", "public", "users", ""},
+
+		{"empty rejected", "", "", "", "empty table name"},
+		{"leading dot rejected", ".users", "", "", "empty schema"},
+		{"trailing dot rejected", "user.", "", "", "empty table"},
+		{"multi-dot rejected", "db.user.users", "", "", "more than one dot"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotSchema, gotTable := SplitSchemaTable(tt.fq)
+			gotSchema, gotTable, err := SplitSchemaTable(tt.fq)
+
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("SplitSchemaTable(%q) expected error containing %q, got nil", tt.fq, tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("SplitSchemaTable(%q) error = %q, want substring %q", tt.fq, err.Error(), tt.wantErr)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("SplitSchemaTable(%q) unexpected error: %v", tt.fq, err)
+			}
 			if gotSchema != tt.wantSchema || gotTable != tt.wantTable {
 				t.Errorf("SplitSchemaTable(%q) = (%q, %q), want (%q, %q)",
 					tt.fq, gotSchema, gotTable, tt.wantSchema, tt.wantTable)

@@ -43,17 +43,24 @@ const ArchivedAtColumn = "archived_at"
 // excluding ArchivedAtColumn. Result order matches src's ordinal_position.
 //
 // srcFQ / tgtFQ are fully-qualified `schema.table` names. A bare table name
-// (no `.`) is treated as being in the `public` schema.
+// (no `.`) is treated as being in the `public` schema. Names containing
+// more than one dot are rejected (see SplitSchemaTable).
 //
-// Returns an error if either table cannot be found in information_schema or
-// if the intersection is empty (which would indicate catastrophic schema
-// mismatch where no INSERT is possible).
+// Returns an error if either name is malformed, either table cannot be
+// found in information_schema, or the intersection is empty (which would
+// indicate catastrophic schema mismatch where no INSERT is possible).
 func ColumnIntersection(db *gorm.DB, srcFQ, tgtFQ string) ([]string, error) {
-	srcSchema, srcTable := SplitSchemaTable(srcFQ)
-	tgtSchema, tgtTable := SplitSchemaTable(tgtFQ)
+	srcSchema, srcTable, err := SplitSchemaTable(srcFQ)
+	if err != nil {
+		return nil, fmt.Errorf("archive: bad src name %q: %w", srcFQ, err)
+	}
+	tgtSchema, tgtTable, err := SplitSchemaTable(tgtFQ)
+	if err != nil {
+		return nil, fmt.Errorf("archive: bad tgt name %q: %w", tgtFQ, err)
+	}
 
 	var cols []string
-	err := db.Raw(`
+	err = db.Raw(`
 		SELECT s.column_name
 		FROM information_schema.columns s
 		JOIN information_schema.columns t
@@ -77,12 +84,20 @@ func ColumnIntersection(db *gorm.DB, srcFQ, tgtFQ string) ([]string, error) {
 // SourceOnlyColumns returns columns present in src but missing from tgt
 // (excluding ArchivedAtColumn). Callers typically log these at WARN level so
 // forgotten archive-table migrations surface instead of silently dropping data.
+//
+// Returns an error if either name is malformed (see SplitSchemaTable).
 func SourceOnlyColumns(db *gorm.DB, srcFQ, tgtFQ string) ([]string, error) {
-	srcSchema, srcTable := SplitSchemaTable(srcFQ)
-	tgtSchema, tgtTable := SplitSchemaTable(tgtFQ)
+	srcSchema, srcTable, err := SplitSchemaTable(srcFQ)
+	if err != nil {
+		return nil, fmt.Errorf("archive: bad src name %q: %w", srcFQ, err)
+	}
+	tgtSchema, tgtTable, err := SplitSchemaTable(tgtFQ)
+	if err != nil {
+		return nil, fmt.Errorf("archive: bad tgt name %q: %w", tgtFQ, err)
+	}
 
 	var cols []string
-	err := db.Raw(`
+	err = db.Raw(`
 		SELECT s.column_name
 		FROM information_schema.columns s
 		WHERE s.table_schema = ?
@@ -103,14 +118,38 @@ func SourceOnlyColumns(db *gorm.DB, srcFQ, tgtFQ string) ([]string, error) {
 }
 
 // SplitSchemaTable parses a fully-qualified `schema.table` name into its parts.
-// A bare `table` (no dot) is returned with schema = "public", matching Postgres'
-// default search_path. The last dot is the split point, so names containing
-// dots in the table portion (unusual but legal when quoted) are not supported.
-func SplitSchemaTable(fq string) (schema, table string) {
-	if i := strings.LastIndexByte(fq, '.'); i >= 0 {
-		return fq[:i], fq[i+1:]
+//
+// Accepted forms:
+//   - `schema.table` → (schema, table, nil)
+//   - `table`        → ("public", table, nil)     // matches Postgres default search_path
+//
+// Rejected (returns error):
+//   - empty string
+//   - name with more than one dot (e.g. `db.schema.table`): information_schema
+//     lookups take a single-token schema and would silently match zero rows;
+//     fail loud instead of producing a misleading "no overlapping columns" error downstream
+//   - empty schema portion (leading dot) or empty table portion (trailing dot)
+//
+// Names with dots embedded via quoting (e.g. `"weird.name"`) are NOT supported —
+// the parser is purely syntactic.
+func SplitSchemaTable(fq string) (schema, table string, err error) {
+	if fq == "" {
+		return "", "", fmt.Errorf("empty table name")
 	}
-	return "public", fq
+	if n := strings.Count(fq, "."); n > 1 {
+		return "", "", fmt.Errorf("invalid table name %q: more than one dot", fq)
+	}
+	if i := strings.IndexByte(fq, '.'); i >= 0 {
+		schema, table = fq[:i], fq[i+1:]
+		if schema == "" {
+			return "", "", fmt.Errorf("invalid table name %q: empty schema", fq)
+		}
+		if table == "" {
+			return "", "", fmt.Errorf("invalid table name %q: empty table", fq)
+		}
+		return schema, table, nil
+	}
+	return "public", fq, nil
 }
 
 // QuoteIdents wraps each identifier in double quotes and joins them with commas,
@@ -118,6 +157,9 @@ func SplitSchemaTable(fq string) (schema, table string) {
 // per the SQL standard.
 //
 // Example: QuoteIdents([]string{"id", "name"}) → `"id","name"`
+//
+// The names are concatenated raw into the resulting SQL string. Pass names
+// obtained from ColumnIntersection or from trusted code — never from user input.
 func QuoteIdents(names []string) string {
 	if len(names) == 0 {
 		return ""
@@ -133,6 +175,10 @@ func QuoteIdents(names []string) string {
 // `alias.`, suitable for the SELECT list of a join-/CTE-based query.
 //
 // Example: PrefixIdents("src", []string{"id", "name"}) → `src."id",src."name"`
+//
+// alias is concatenated raw into the SQL without quoting or validation.
+// Callers must pass a trusted literal (typically a hardcoded alias like "src"
+// or "t"), never user input or anything derived from it.
 func PrefixIdents(alias string, names []string) string {
 	if len(names) == 0 {
 		return ""
