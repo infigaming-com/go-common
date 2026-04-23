@@ -135,19 +135,30 @@ func (s *subscription) receiver() {
 			return
 		}
 
+		// Transports may return nil for a clean close (e.g. inmem shutdown).
+		// Mirror the pre-watchdog behaviour and exit.
+		if err == nil {
+			s.backoff.Reset()
+			return
+		}
+
 		// Watchdog-initiated refresh: receiveCtx was cancelled intentionally.
 		// Treat this as a normal reconnect (no backoff penalty) and loop.
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			select {
 			case r := <-reason:
 				s.logger.Info(s.ctx, "subscription stream refreshed", "topic", s.Topic(), "reason", r)
+				s.backoff.Reset()
+				continue
 			default:
-				// Canceled without a watchdog reason means an upstream caller
-				// cancelled us while the parent is still live. Treat as shutdown.
-				return
+				// Canceled without a watchdog reason and the parent ctx is
+				// still live -- this should not happen with the default
+				// transports. Fail loud and treat as transient so we reconnect
+				// instead of silently exiting (the very failure mode this
+				// watchdog was introduced to prevent).
+				s.logger.Error(s.ctx, "subscription cancelled without watchdog reason, reconnecting",
+					"topic", s.Topic(), "err", err)
 			}
-			s.backoff.Reset()
-			continue
 		}
 
 		// Real transport error: classify and back off.
@@ -226,9 +237,13 @@ func (s *subscription) streamWatchdog(
 				stale = time.Since(streamStart) > inactivity*2
 			}
 			if stale {
+				lastStr := "never"
+				if !last.IsZero() {
+					lastStr = last.Format(time.RFC3339)
+				}
 				s.logger.Error(s.ctx, "subscription stream inactive, forcing reconnect",
 					"topic", s.Topic(),
-					"last_activity", last,
+					"last_activity", lastStr,
 					"stream_age", time.Since(streamStart).String())
 				trigger("inactivity_timeout")
 				return

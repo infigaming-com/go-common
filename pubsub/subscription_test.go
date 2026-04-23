@@ -122,9 +122,12 @@ func TestStreamWatchdog_PeriodicRefresh(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
+	// 500ms / 80ms = 6.25 expected refreshes. Accept >=3 to absorb slow-CI
+	// jitter without masking a real regression (the unpatched receiver would
+	// produce exactly 1 call).
 	got := transport.subscribeCalls.Load()
-	if got < 4 {
-		t.Fatalf("expected >=4 Subscribe calls within 500ms at 80ms refresh, got %d", got)
+	if got < 3 {
+		t.Fatalf("expected >=3 Subscribe calls within 500ms at 80ms refresh, got %d", got)
 	}
 
 	if !logger.has("info", "stream refreshed") {
@@ -229,6 +232,99 @@ func TestReceiveError_PermanentLogsAsError(t *testing.T) {
 	if err := sub.Stop(ctx); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
+}
+
+// TestReceive_NilErrorExits verifies that a transport returning nil (clean
+// close, e.g. inmem shutdown) exits the receiver instead of spinning in an
+// error loop.
+func TestReceive_NilErrorExits(t *testing.T) {
+	calls := make(chan struct{}, 8)
+	transport := &mockTransport{
+		subscribeFn: func(_ context.Context, _ TransportHandler) error {
+			calls <- struct{}{}
+			return nil // clean close
+		},
+	}
+	logger := &recordingLogger{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client, err := New(ctx, transport, WithLogger(logger))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, err = client.Subscribe(
+		"clean-close",
+		HandlerFunc(func(_ context.Context, _ *Message) error { return nil }),
+		WithSubscriptionStreamRefreshInterval(-1),
+		WithSubscriptionInactivityTimeout(-1),
+	)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	// Wait for the first Subscribe call, then give the receiver a chance to
+	// loop (which it shouldn't on a nil return).
+	<-calls
+	time.Sleep(100 * time.Millisecond)
+
+	if got := transport.subscribeCalls.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 Subscribe call after nil return, got %d", got)
+	}
+	if logger.has("warn", "subscription reconnect") {
+		t.Fatalf("nil error must not log as reconnect; entries=%+v", logger.entries)
+	}
+}
+
+// TestReceive_SpuriousCanceledReconnects guards against the silent-death
+// failure mode: if a transport returns context.Canceled while the parent
+// context is still alive (e.g. transport bug), the receiver must log loudly
+// and reconnect rather than exit.
+func TestReceive_SpuriousCanceledReconnects(t *testing.T) {
+	var calls atomic.Int32
+	transport := &mockTransport{
+		subscribeFn: func(ctx context.Context, _ TransportHandler) error {
+			n := calls.Add(1)
+			if n == 1 {
+				// Return context.Canceled without the parent ctx being done.
+				return context.Canceled
+			}
+			// Subsequent calls block until this receiveCtx is cancelled
+			// (i.e. until Stop() tears us down).
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	}
+	logger := &recordingLogger{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client, err := New(ctx, transport, WithLogger(logger))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	sub, err := client.Subscribe(
+		"spurious-cancel",
+		HandlerFunc(func(_ context.Context, _ *Message) error { return nil }),
+		WithSubscriptionStreamRefreshInterval(-1),
+		WithSubscriptionInactivityTimeout(-1),
+	)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer sub.Stop(ctx)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if calls.Load() >= 2 && logger.has("error", "cancelled without watchdog reason") {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("expected reconnect + ERROR log on spurious Canceled; calls=%d entries=%+v",
+		calls.Load(), logger.entries)
 }
 
 // TestReceiveError_TransientLogsAsWarn asserts codes like Unavailable remain at

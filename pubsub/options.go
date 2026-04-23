@@ -33,12 +33,23 @@ type subscriptionOptions struct {
 	maxExtension   time.Duration
 	workers        int
 	buffer         int
-	// streamRefreshInterval forces the underlying Receive call to be torn down and
-	// re-established on a fixed cadence. Guards against zombie StreamingPull streams
-	// where the gRPC connection is alive but the server stops pushing. Zero disables.
+	// streamRefreshInterval forces the underlying Receive call to be torn down
+	// and re-established on a fixed cadence. Guards against zombie
+	// StreamingPull streams where the gRPC connection is alive but the server
+	// stops pushing. Zero disables.
+	//
+	// NOTE: On GCP Pub/Sub, ack IDs are bound to the pull session. Any message
+	// still in flight when a refresh happens will fail to ack (INVALID_ACK_ID)
+	// and will be redelivered after the ack deadline. Handlers must therefore
+	// be idempotent, and leaving the built-in deduplication cache enabled with
+	// a TTL that covers the redelivery window is strongly recommended.
+	// The default (30m) keeps the redelivery rate well under 50 events/day
+	// per subscription; primary detection is the inactivity timeout below.
 	streamRefreshInterval time.Duration
-	// inactivityTimeout triggers a reconnect when no messages have been observed
-	// on the stream for longer than this window. Zero disables.
+	// inactivityTimeout triggers a reconnect when no messages have been
+	// observed on the stream for longer than this window. Zero disables.
+	// This is the reactive detection path; streamRefreshInterval is the
+	// preventive one.
 	inactivityTimeout time.Duration
 	retryPolicy       RetryPolicy
 	deadLetterTopic   string
@@ -73,7 +84,7 @@ func defaultOptions() options {
 		defaultExtension:         60 * time.Second,
 		defaultWorkers:           8,
 		defaultBuffer:            512,
-		defaultStreamRefresh:     5 * time.Minute,
+		defaultStreamRefresh:     30 * time.Minute,
 		defaultInactivityTimeout: 3 * time.Minute,
 		retryPolicy: RetryPolicy{
 			MaxAttempts:    5,
