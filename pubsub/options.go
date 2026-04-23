@@ -11,29 +11,38 @@ type SubscriptionOption func(*subscriptionOptions)
 type PublishOption func(*publishOptions)
 
 type options struct {
-	logger           Logger
-	hooks            Hooks
-	defaultAck       time.Duration
-	defaultProcess   time.Duration
-	defaultExtension time.Duration
-	defaultWorkers   int
-	defaultBuffer    int
-	retryPolicy      RetryPolicy
-	encoder          Encoder
-	decoder          Decoder
-	dedupe           DeduplicationConfig
+	logger                   Logger
+	hooks                    Hooks
+	defaultAck               time.Duration
+	defaultProcess           time.Duration
+	defaultExtension         time.Duration
+	defaultWorkers           int
+	defaultBuffer            int
+	defaultStreamRefresh     time.Duration
+	defaultInactivityTimeout time.Duration
+	retryPolicy              RetryPolicy
+	encoder                  Encoder
+	decoder                  Decoder
+	dedupe                   DeduplicationConfig
 }
 
 type subscriptionOptions struct {
-	name            string
-	ackDeadline     time.Duration
-	processTimeout  time.Duration
-	maxExtension    time.Duration
-	workers         int
-	buffer          int
-	retryPolicy     RetryPolicy
-	deadLetterTopic string
-	dedupe          DeduplicationConfig
+	name           string
+	ackDeadline    time.Duration
+	processTimeout time.Duration
+	maxExtension   time.Duration
+	workers        int
+	buffer         int
+	// streamRefreshInterval forces the underlying Receive call to be torn down and
+	// re-established on a fixed cadence. Guards against zombie StreamingPull streams
+	// where the gRPC connection is alive but the server stops pushing. Zero disables.
+	streamRefreshInterval time.Duration
+	// inactivityTimeout triggers a reconnect when no messages have been observed
+	// on the stream for longer than this window. Zero disables.
+	inactivityTimeout time.Duration
+	retryPolicy       RetryPolicy
+	deadLetterTopic   string
+	dedupe            DeduplicationConfig
 }
 
 type publishOptions struct {
@@ -59,11 +68,13 @@ type DeduplicationConfig struct {
 
 func defaultOptions() options {
 	return options{
-		defaultAck:       20 * time.Second,
-		defaultProcess:   30 * time.Second,
-		defaultExtension: 60 * time.Second,
-		defaultWorkers:   8,
-		defaultBuffer:    512,
+		defaultAck:               20 * time.Second,
+		defaultProcess:           30 * time.Second,
+		defaultExtension:         60 * time.Second,
+		defaultWorkers:           8,
+		defaultBuffer:            512,
+		defaultStreamRefresh:     5 * time.Minute,
+		defaultInactivityTimeout: 3 * time.Minute,
 		retryPolicy: RetryPolicy{
 			MaxAttempts:    5,
 			InitialBackoff: 500 * time.Millisecond,
@@ -77,14 +88,16 @@ func defaultOptions() options {
 
 func defaultSubscriptionOptions(parent options, topic string) subscriptionOptions {
 	return subscriptionOptions{
-		name:           topic,
-		ackDeadline:    parent.defaultAck,
-		processTimeout: parent.defaultProcess,
-		maxExtension:   parent.defaultExtension,
-		workers:        parent.defaultWorkers,
-		buffer:         parent.defaultBuffer,
-		retryPolicy:    parent.retryPolicy,
-		dedupe:         parent.dedupe,
+		name:                  topic,
+		ackDeadline:           parent.defaultAck,
+		processTimeout:        parent.defaultProcess,
+		maxExtension:          parent.defaultExtension,
+		workers:               parent.defaultWorkers,
+		buffer:                parent.defaultBuffer,
+		streamRefreshInterval: parent.defaultStreamRefresh,
+		inactivityTimeout:     parent.defaultInactivityTimeout,
+		retryPolicy:           parent.retryPolicy,
+		dedupe:                parent.dedupe,
 	}
 }
 
@@ -144,6 +157,36 @@ func WithDefaultBuffer(n int) Option {
 	return func(o *options) {
 		if n > 0 {
 			o.defaultBuffer = n
+		}
+	}
+}
+
+// WithDefaultStreamRefreshInterval sets how often every subscription tears down
+// and reopens its underlying Receive call. Negative values disable; zero keeps
+// the library default (5 minutes).
+func WithDefaultStreamRefreshInterval(d time.Duration) Option {
+	return func(o *options) {
+		if d < 0 {
+			o.defaultStreamRefresh = 0
+			return
+		}
+		if d > 0 {
+			o.defaultStreamRefresh = d
+		}
+	}
+}
+
+// WithDefaultInactivityTimeout sets the per-stream silence window after which a
+// subscription forces a reconnect. Negative values disable; zero keeps the
+// library default (3 minutes).
+func WithDefaultInactivityTimeout(d time.Duration) Option {
+	return func(o *options) {
+		if d < 0 {
+			o.defaultInactivityTimeout = 0
+			return
+		}
+		if d > 0 {
+			o.defaultInactivityTimeout = d
 		}
 	}
 }
@@ -227,6 +270,36 @@ func WithSubscriptionDeadLetter(topic string) SubscriptionOption {
 func WithSubscriptionDeduplication(cfg DeduplicationConfig) SubscriptionOption {
 	return func(o *subscriptionOptions) {
 		o.dedupe = cfg
+	}
+}
+
+// WithSubscriptionStreamRefreshInterval overrides the periodic stream refresh
+// interval for a single subscription. Negative disables, zero keeps the
+// client-level default.
+func WithSubscriptionStreamRefreshInterval(d time.Duration) SubscriptionOption {
+	return func(o *subscriptionOptions) {
+		if d < 0 {
+			o.streamRefreshInterval = 0
+			return
+		}
+		if d > 0 {
+			o.streamRefreshInterval = d
+		}
+	}
+}
+
+// WithSubscriptionInactivityTimeout overrides the inactivity reconnect window
+// for a single subscription. Negative disables, zero keeps the client-level
+// default.
+func WithSubscriptionInactivityTimeout(d time.Duration) SubscriptionOption {
+	return func(o *subscriptionOptions) {
+		if d < 0 {
+			o.inactivityTimeout = 0
+			return
+		}
+		if d > 0 {
+			o.inactivityTimeout = d
+		}
 	}
 }
 
