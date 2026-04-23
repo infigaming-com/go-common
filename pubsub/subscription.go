@@ -9,7 +9,30 @@ import (
 
 	"github.com/infigaming-com/go-common/pubsub/internal/backoff"
 	"github.com/infigaming-com/go-common/pubsub/internal/worker"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+// maxInactivityCheckInterval caps how often the watchdog polls LastActivity.
+// Short enough to react promptly in prod, while the actual interval shrinks
+// further when inactivityTimeout is small (e.g. in tests).
+const maxInactivityCheckInterval = 30 * time.Second
+
+// inactivityCheckInterval returns a poll cadence that is always at most half
+// the inactivity window so the watchdog can detect a timeout within one window.
+func inactivityCheckInterval(timeout time.Duration) time.Duration {
+	if timeout <= 0 {
+		return maxInactivityCheckInterval
+	}
+	half := timeout / 2
+	if half < 10*time.Millisecond {
+		half = 10 * time.Millisecond
+	}
+	if half > maxInactivityCheckInterval {
+		return maxInactivityCheckInterval
+	}
+	return half
+}
 
 type Subscription interface {
 	Topic() string
@@ -88,33 +111,176 @@ func (s *subscription) start() {
 func (s *subscription) receiver() {
 	defer s.wg.Done()
 	for {
-		select {
-		case <-s.ctx.Done():
+		if s.ctx.Err() != nil {
 			return
-		default:
 		}
-		err := s.transport.Subscribe(s.ctx, s.options.name, TransportSubscribeOptions{
+
+		// Each iteration opens a fresh Receive call under a child context the
+		// watchdog can cancel independently of the parent subscription context.
+		receiveCtx, cancelReceive := context.WithCancel(s.ctx)
+		watchdogDone := make(chan struct{})
+		reason := make(chan string, 1)
+		go s.streamWatchdog(receiveCtx, cancelReceive, reason, watchdogDone)
+
+		err := s.transport.Subscribe(receiveCtx, s.options.name, TransportSubscribeOptions{
 			AckDeadline:  s.options.ackDeadline,
 			MaxExtension: s.options.maxExtension,
 			Parallelism:  s.options.workers,
 		}, s.handleTransportMessage)
-		if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		cancelReceive()
+		<-watchdogDone
+
+		// Parent context cancelled => we are shutting down; exit cleanly.
+		if s.ctx.Err() != nil {
+			return
+		}
+
+		// Transports may return nil for a clean close (e.g. inmem shutdown).
+		// Mirror the pre-watchdog behaviour and exit.
+		if err == nil {
 			s.backoff.Reset()
 			return
 		}
+
+		// Watchdog-initiated refresh: receiveCtx was cancelled intentionally.
+		// Treat this as a normal reconnect (no backoff penalty) and loop.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			select {
+			case r := <-reason:
+				s.logger.Info(s.ctx, "subscription stream refreshed", "topic", s.Topic(), "reason", r)
+				s.backoff.Reset()
+				continue
+			default:
+				// Canceled without a watchdog reason and the parent ctx is
+				// still live -- this should not happen with the default
+				// transports. Fail loud and treat as transient so we reconnect
+				// instead of silently exiting (the very failure mode this
+				// watchdog was introduced to prevent).
+				s.logger.Error(s.ctx, "subscription cancelled without watchdog reason, reconnecting",
+					"topic", s.Topic(), "err", err)
+			}
+		}
+
+		// Real transport error: classify and back off.
 		s.onReceiveError(err)
 		delay := s.backoff.Next()
-		s.logger.Warn(s.ctx, "subscription reconnect", "topic", s.Topic(), "delay", delay.String(), "err", err)
+		s.logReceiveError(err, delay)
+
 		sleepCtx, cancel := context.WithTimeout(s.ctx, delay)
 		select {
 		case <-sleepCtx.Done():
 		case <-s.ctx.Done():
 		}
 		cancel()
-		if s.ctx.Err() != nil {
+	}
+}
+
+// streamWatchdog forces the active Receive call to terminate when it looks
+// stuck: either after a fixed refresh interval (preventive) or after no
+// message activity for inactivityTimeout (reactive). The goroutine exits as
+// soon as receiveCtx is done.
+func (s *subscription) streamWatchdog(
+	receiveCtx context.Context,
+	cancelReceive context.CancelFunc,
+	reason chan<- string,
+	done chan<- struct{},
+) {
+	defer close(done)
+
+	refresh := s.options.streamRefreshInterval
+	inactivity := s.options.inactivityTimeout
+	if refresh <= 0 && inactivity <= 0 {
+		<-receiveCtx.Done()
+		return
+	}
+
+	streamStart := time.Now()
+	var refreshC <-chan time.Time
+	if refresh > 0 {
+		t := time.NewTicker(refresh)
+		defer t.Stop()
+		refreshC = t.C
+	}
+	var inactivityC <-chan time.Time
+	if inactivity > 0 {
+		t := time.NewTicker(inactivityCheckInterval(inactivity))
+		defer t.Stop()
+		inactivityC = t.C
+	}
+
+	trigger := func(r string) {
+		select {
+		case reason <- r:
+		default:
+		}
+		cancelReceive()
+	}
+
+	for {
+		select {
+		case <-receiveCtx.Done():
 			return
+		case <-refreshC:
+			trigger("periodic_refresh")
+			return
+		case <-inactivityC:
+			s.mu.RLock()
+			last := s.health.LastActivity
+			s.mu.RUnlock()
+			var stale bool
+			if !last.IsZero() {
+				stale = time.Since(last) > inactivity
+			} else {
+				// No message ever observed on this stream. Only flag as stuck
+				// after twice the inactivity window to avoid false positives
+				// on genuinely idle topics during their first minutes.
+				stale = time.Since(streamStart) > inactivity*2
+			}
+			if stale {
+				lastStr := "never"
+				if !last.IsZero() {
+					lastStr = last.Format(time.RFC3339)
+				}
+				s.logger.Error(s.ctx, "subscription stream inactive, forcing reconnect",
+					"topic", s.Topic(),
+					"last_activity", lastStr,
+					"stream_age", time.Since(streamStart).String())
+				trigger("inactivity_timeout")
+				return
+			}
 		}
 	}
+}
+
+// logReceiveError downgrades transient transport failures to WARN and surfaces
+// permanent configuration errors (NotFound, PermissionDenied, ...) as ERROR so
+// log-based alerts can catch them.
+func (s *subscription) logReceiveError(err error, delay time.Duration) {
+	code := grpcCode(err)
+	switch code {
+	case codes.NotFound, codes.PermissionDenied, codes.Unauthenticated,
+		codes.InvalidArgument, codes.FailedPrecondition:
+		s.logger.Error(s.ctx, "subscription misconfigured, retry is futile until fixed",
+			"topic", s.Topic(),
+			"code", code.String(),
+			"delay", delay.String(),
+			"err", err)
+	default:
+		s.logger.Warn(s.ctx, "subscription reconnect",
+			"topic", s.Topic(),
+			"delay", delay.String(),
+			"err", err)
+	}
+}
+
+func grpcCode(err error) codes.Code {
+	if err == nil {
+		return codes.OK
+	}
+	if st, ok := status.FromError(err); ok {
+		return st.Code()
+	}
+	return codes.Unknown
 }
 
 func (s *subscription) dispatcher() {
@@ -140,6 +306,10 @@ func (s *subscription) handleTransportMessage(ctx context.Context, raw *Transpor
 	if raw == nil {
 		return nil
 	}
+	// Mark the stream as alive the moment a message arrives from the transport,
+	// independent of whether the handler succeeds. The watchdog reads this to
+	// decide whether StreamingPull has gone silent.
+	s.touchActivity()
 	if s.breaker.open() {
 		s.logger.Warn(ctx, "subscription circuit open", "topic", s.Topic(), "message", raw.ID)
 		return raw.Nack()
@@ -164,6 +334,12 @@ func (s *subscription) handleTransportMessage(ctx context.Context, raw *Transpor
 		}
 		return nil
 	}
+}
+
+func (s *subscription) touchActivity() {
+	s.mu.Lock()
+	s.health.LastActivity = time.Now()
+	s.mu.Unlock()
 }
 
 func (s *subscription) schedule(raw *TransportMessage) {
