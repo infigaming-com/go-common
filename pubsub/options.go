@@ -54,6 +54,9 @@ type subscriptionOptions struct {
 	retryPolicy       RetryPolicy
 	deadLetterTopic   string
 	dedupe            DeduplicationConfig
+	// dedupeStore, if set, is consulted before in-memory dedupe and replaces
+	// it. Use for shared (Redis-backed) dedupe across pods / restarts.
+	dedupeStore DedupeStore
 }
 
 type publishOptions struct {
@@ -281,6 +284,21 @@ func WithSubscriptionDeadLetter(topic string) SubscriptionOption {
 func WithSubscriptionDeduplication(cfg DeduplicationConfig) SubscriptionOption {
 	return func(o *subscriptionOptions) {
 		o.dedupe = cfg
+	}
+}
+
+// WithSubscriptionDedupeStore replaces the in-memory dedupe cache with a
+// caller-supplied DedupeStore for this subscription. Pair with a Redis-backed
+// store (NewRedisDedupeStore) when handler side-effects must not duplicate
+// across pods or process restarts (e.g. Slack/Telegram notifications,
+// payment-channel calls).
+//
+// The TTL still comes from DeduplicationConfig.TTL — set it via
+// WithSubscriptionDeduplication or rely on the client default. Setting the
+// store implicitly enables dedupe regardless of DeduplicationConfig.Enabled.
+func WithSubscriptionDedupeStore(store DedupeStore) SubscriptionOption {
+	return func(o *subscriptionOptions) {
+		o.dedupeStore = store
 	}
 }
 
