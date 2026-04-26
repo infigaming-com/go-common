@@ -61,7 +61,8 @@ type subscription struct {
 	buffer    chan *TransportMessage
 	backoff   *backoff.Exponential
 	breaker   *breaker
-	dedupe    *dedupeCache
+	dedupe    DedupeStore
+	dedupeTTL time.Duration
 	hooks     Hooks
 	logger    Logger
 	transport Transport
@@ -77,9 +78,16 @@ func newSubscription(parent context.Context, client *Client, topic string, handl
 	p := worker.New(opts.workers, opts.buffer)
 	h := SubscriptionHealth{Topic: topic, Workers: opts.workers}
 
-	var dedupe *dedupeCache
-	if opts.dedupe.Enabled {
-		dedupe = newDedupeCache(opts.dedupe.Size, opts.dedupe.TTL)
+	// An explicitly-injected DedupeStore wins (typically Redis-backed for
+	// cross-pod, cross-restart correctness). Otherwise fall back to the
+	// legacy in-memory cache when DeduplicationConfig.Enabled is true so
+	// existing callers see no behaviour change.
+	var dedupe DedupeStore
+	switch {
+	case opts.dedupeStore != nil:
+		dedupe = opts.dedupeStore
+	case opts.dedupe.Enabled:
+		dedupe = newInMemoryDedupeStore(opts.dedupe.Size)
 	}
 
 	return &subscription{
@@ -93,6 +101,7 @@ func newSubscription(parent context.Context, client *Client, topic string, handl
 		backoff:   backoff.New(backoff.Config{Initial: opts.retryPolicy.InitialBackoff, Max: opts.retryPolicy.MaxBackoff, Multiplier: opts.retryPolicy.Multiplier, Jitter: opts.retryPolicy.Jitter}),
 		breaker:   newBreaker(5, opts.retryPolicy.InitialBackoff*2),
 		dedupe:    dedupe,
+		dedupeTTL: opts.dedupe.TTL,
 		hooks:     client.opts.hooks,
 		logger:    client.logger(),
 		transport: client.transport,
@@ -314,13 +323,21 @@ func (s *subscription) handleTransportMessage(ctx context.Context, raw *Transpor
 		s.logger.Warn(ctx, "subscription circuit open", "topic", s.Topic(), "message", raw.ID)
 		return raw.Nack()
 	}
-	if s.dedupe != nil && s.dedupe.seen(raw.ID) {
-		s.logger.Debug(ctx, "subscription dedupe drop", "topic", s.Topic(), "message", raw.ID)
-		if err := raw.Ack(); err != nil {
-			s.logger.Error(ctx, "dedupe ack failed", "topic", s.Topic(), "message", raw.ID, "err", err)
-			return err
+	if s.dedupe != nil {
+		seen, err := s.dedupe.Seen(ctx, raw.ID, s.dedupeTTL)
+		if err != nil {
+			// Fail open: a flaky dedupe store should never block delivery.
+			// Reprocessing a message is far cheaper than dropping one.
+			s.logger.Warn(ctx, "subscription dedupe check failed, processing message",
+				"topic", s.Topic(), "message", raw.ID, "err", err)
+		} else if seen {
+			s.logger.Debug(ctx, "subscription dedupe drop", "topic", s.Topic(), "message", raw.ID)
+			if err := raw.Ack(); err != nil {
+				s.logger.Error(ctx, "dedupe ack failed", "topic", s.Topic(), "message", raw.ID, "err", err)
+				return err
+			}
+			return nil
 		}
-		return nil
 	}
 	select {
 	case <-ctx.Done():
@@ -581,54 +598,4 @@ func (b *breaker) open() bool {
 		return false
 	}
 	return true
-}
-
-type dedupeCache struct {
-	mu    sync.Mutex
-	items map[string]time.Time
-	size  int
-	ttl   time.Duration
-}
-
-func newDedupeCache(size int, ttl time.Duration) *dedupeCache {
-	if size <= 0 {
-		size = 1024
-	}
-	if ttl <= 0 {
-		ttl = 5 * time.Minute
-	}
-	return &dedupeCache{items: make(map[string]time.Time, size), size: size, ttl: ttl}
-}
-
-func (d *dedupeCache) seen(id string) bool {
-	now := time.Now()
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if expiry, ok := d.items[id]; ok {
-		if now.Before(expiry) {
-			return true
-		}
-	}
-	if len(d.items) >= d.size {
-		d.evict(now)
-	}
-	d.items[id] = now.Add(d.ttl)
-	return false
-}
-
-func (d *dedupeCache) evict(now time.Time) {
-	for k, v := range d.items {
-		if now.After(v) {
-			delete(d.items, k)
-		}
-	}
-	if len(d.items) <= d.size {
-		return
-	}
-	for k := range d.items {
-		delete(d.items, k)
-		if len(d.items) <= d.size {
-			return
-		}
-	}
 }
