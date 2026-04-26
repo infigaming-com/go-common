@@ -54,13 +54,15 @@ func TestInMemoryDedupeStore_EvictsAtCap(t *testing.T) {
 	s := newInMemoryDedupeStore(2)
 	ctx := context.Background()
 
-	_, _ = s.Seen(ctx, "a", time.Hour)
-	_, _ = s.Seen(ctx, "b", time.Hour)
-	// At cap. Inserting a third must evict to make room.
-	_, _ = s.Seen(ctx, "c", time.Hour)
-
-	if got := len(s.items); got > s.size {
-		t.Fatalf("len=%d exceeds size=%d, eviction broken", got, s.size)
+	// Insert 10 unique unexpired ids into a size-2 store. The map must never
+	// grow past size between insertions — the previous evictLocked returned
+	// when len == size and let the caller's unconditional insert push it to
+	// size+1.
+	for i := 0; i < 10; i++ {
+		_, _ = s.Seen(ctx, fmt.Sprintf("k-%d", i), time.Hour)
+		if got := len(s.items); got > s.size {
+			t.Fatalf("after %d inserts: len=%d > size=%d", i+1, got, s.size)
+		}
 	}
 }
 
@@ -150,6 +152,38 @@ func TestRedisDedupeStore_PrefixIsolatesTopics(t *testing.T) {
 	if seen, _ := b.Seen(ctx, "shared-id", time.Minute); seen {
 		t.Fatalf("topic B should be isolated from topic A's keyspace")
 	}
+}
+
+func TestRedisDedupeStore_PrefixTrimsTrailingColon(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	// "svc:dedupe:topic" and "svc:dedupe:topic:" must produce the same keys
+	// so that an accidental trailing colon in caller config is a no-op
+	// rather than a silent dedupe miss.
+	a := NewRedisDedupeStore(client, "svc:dedupe:topic")
+	b := NewRedisDedupeStore(client, "svc:dedupe:topic:")
+	ctx := context.Background()
+
+	if seen, _ := a.Seen(ctx, "id-1", time.Minute); seen {
+		t.Fatalf("a first call should be not-seen")
+	}
+	// b uses the trimmed-equivalent prefix, so it should observe a's write.
+	if seen, _ := b.Seen(ctx, "id-1", time.Minute); !seen {
+		t.Fatalf("b should observe a's key (trailing colon must be trimmed)")
+	}
+}
+
+func TestNewRedisDedupeStore_PanicsOnNilClient(t *testing.T) {
+	t.Parallel()
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected panic on nil client")
+		}
+	}()
+	_ = NewRedisDedupeStore(nil, "svc:dedupe:topic")
 }
 
 func TestRedisDedupeStore_FailsOpenOnError(t *testing.T) {

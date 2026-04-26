@@ -2,6 +2,7 @@ package pubsub
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -15,12 +16,23 @@ import (
 // keyPrefix should namespace the keys per service AND per topic, e.g.
 // "push:dedupe:wallet.balance.update.sub.push". Without a per-topic suffix,
 // two subscriptions sharing the same Redis client would collide on
-// platform-assigned message IDs.
+// platform-assigned message IDs. A trailing colon is stripped so that both
+// "svc:dedupe:topic" and "svc:dedupe:topic:" produce identical keys.
 //
 // The redis.Cmdable parameter accepts both *redis.Client and
 // redis.UniversalClient (which is required for cluster deployments).
+//
+// Panics if client is nil — using a non-functional dedupe store would lead
+// to silent unbounded duplicate side effects, which is exactly the failure
+// mode this type exists to prevent.
 func NewRedisDedupeStore(client redis.Cmdable, keyPrefix string) DedupeStore {
-	return &redisDedupeStore{client: client, prefix: keyPrefix}
+	if client == nil {
+		panic("pubsub.NewRedisDedupeStore: nil client")
+	}
+	return &redisDedupeStore{
+		client: client,
+		prefix: strings.TrimRight(keyPrefix, ":"),
+	}
 }
 
 type redisDedupeStore struct {

@@ -15,6 +15,24 @@ import (
 // Errors returned from Seen are logged by the subscription and treated as a
 // "not seen" answer — fail-open. Dropping a message because the dedupe store
 // is unhealthy is strictly worse than reprocessing it.
+//
+// IMPORTANT — pre-handler semantics:
+//
+// Seen is called BEFORE the handler runs. The dedupe key is therefore set
+// even if the handler later returns an error and the message is Nacked.
+// Within the TTL window, every redelivery of that id is silently dropped.
+//
+//	Use this ONLY for at-most-once side effects:
+//	  ✓ Slack / Telegram / push notifications
+//	  ✓ One-shot external API calls (payment-channel webhooks, etc.)
+//
+//	Do NOT enable dedupe on handlers that need at-least-once delivery:
+//	  ✗ DB writes that must commit eventually
+//	  ✗ Bet settlement, balance updates, anything ledger-like
+//
+// If a handler is at-least-once but its side effects are also expensive
+// to repeat, do not enable dedupe here — instead make the handler itself
+// idempotent (e.g. UNIQUE constraint, conditional UPDATE).
 type DedupeStore interface {
 	// Seen records id under the given TTL window and reports whether the id
 	// was already present. A true return means the caller should skip the
