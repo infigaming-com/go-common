@@ -144,27 +144,41 @@ func (s *subscription) receiver() {
 			return
 		}
 
-		// Transports may return nil for a clean close (e.g. inmem shutdown).
-		// Mirror the pre-watchdog behaviour and exit.
-		if err == nil {
-			s.backoff.Reset()
-			return
-		}
-
-		// Watchdog-initiated refresh: receiveCtx was cancelled intentionally.
-		// Treat this as a normal reconnect (no backoff penalty) and loop.
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		// The watchdog may have triggered a refresh. Two return shapes are
+		// possible from the underlying transport when receiveCtx is cancelled
+		// by the watchdog:
+		//
+		//   * err == nil. The Google Cloud Pub/Sub transport documents this:
+		//     "Receive returns nil when the receiver is shut down; that is,
+		//     when the parent ctx is cancelled or the maximum stream time is
+		//     reached." So nil is ambiguous — it can be either a watchdog
+		//     refresh OR a genuine clean close.
+		//
+		//   * errors.Is(err, context.Canceled) or DeadlineExceeded. Other
+		//     transports surface the cancellation as an error.
+		//
+		// In both cases we must consult the reason channel BEFORE deciding
+		// to exit, otherwise a watchdog refresh on the GCP transport
+		// silently kills the receiver goroutine and the subscription stops
+		// pulling forever. (This is exactly the failure mode the watchdog
+		// was introduced to prevent — see go-common PRs #54 and #56.)
+		watchdogTriggered := errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || err == nil
+		if watchdogTriggered {
 			select {
 			case r := <-reason:
 				s.logger.Info(s.ctx, "subscription stream refreshed", "topic", s.Topic(), "reason", r)
 				s.backoff.Reset()
 				continue
 			default:
-				// Canceled without a watchdog reason and the parent ctx is
-				// still live -- this should not happen with the default
-				// transports. Fail loud and treat as transient so we reconnect
-				// instead of silently exiting (the very failure mode this
-				// watchdog was introduced to prevent).
+				if err == nil {
+					// Genuine clean close (parent ctx already returned above,
+					// so this is the inmem-style shutdown path).
+					s.backoff.Reset()
+					return
+				}
+				// Cancellation we did not initiate. Surface loudly and
+				// reconnect rather than silently exiting (the same
+				// silent-death failure mode).
 				s.logger.Error(s.ctx, "subscription cancelled without watchdog reason, reconnecting",
 					"topic", s.Topic(), "err", err)
 			}
