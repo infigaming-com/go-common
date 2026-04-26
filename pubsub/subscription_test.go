@@ -277,6 +277,61 @@ func TestReceive_NilErrorExits(t *testing.T) {
 	}
 }
 
+// TestStreamWatchdog_NilReturnAfterRefreshReconnects guards against the
+// silent-death regression caused by a watchdog refresh on a transport that
+// returns nil-err on ctx cancel (e.g. the Google Cloud Pub/Sub transport,
+// whose docs state "Receive returns nil when the receiver is shut down;
+// that is, when the parent ctx is cancelled or the maximum stream time is
+// reached"). Without the fix, the receiver took the "err == nil → return"
+// fast path and the subscription went dead the first time the watchdog
+// fired — exactly the failure mode the watchdog was introduced to prevent.
+func TestStreamWatchdog_NilReturnAfterRefreshReconnects(t *testing.T) {
+	transport := &mockTransport{
+		subscribeFn: func(ctx context.Context, _ TransportHandler) error {
+			// Block until the watchdog cancels receiveCtx, then return nil
+			// like the GCP transport would.
+			<-ctx.Done()
+			return nil
+		},
+	}
+	logger := &recordingLogger{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client, err := New(ctx, transport, WithLogger(logger))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	sub, err := client.Subscribe(
+		"nil-after-refresh",
+		HandlerFunc(func(_ context.Context, _ *Message) error { return nil }),
+		// Force a refresh as fast as the watchdog allows.
+		WithSubscriptionStreamRefreshInterval(80*time.Millisecond),
+		WithSubscriptionInactivityTimeout(-1),
+	)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer sub.Stop(ctx)
+
+	// Without the fix, subscribeCalls stays at 1 forever after the first
+	// refresh because the receiver exits silently. With the fix, the
+	// receiver consults the reason channel, sees the periodic-refresh
+	// reason, logs Info, and reopens the stream.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if transport.subscribeCalls.Load() >= 3 && logger.countMessage("stream refreshed") >= 2 {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("watchdog refresh on nil-returning transport must reconnect: calls=%d, refreshed_logs=%d, entries=%+v",
+		transport.subscribeCalls.Load(),
+		logger.countMessage("stream refreshed"),
+		logger.entries)
+}
+
 // TestReceive_SpuriousCanceledReconnects guards against the silent-death
 // failure mode: if a transport returns context.Canceled while the parent
 // context is still alive (e.g. transport bug), the receiver must log loudly
