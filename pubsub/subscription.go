@@ -250,14 +250,23 @@ func (s *subscription) streamWatchdog(
 			s.mu.RLock()
 			last := s.health.LastActivity
 			s.mu.RUnlock()
+			// LastActivity is subscription-scoped, not stream-scoped: it
+			// keeps the timestamp of the most recent message across every
+			// reconnect. After an inactivity-triggered kill, the new
+			// stream's first inactivityC tick would otherwise read a
+			// LastActivity that already exceeds the window and trip again
+			// immediately, producing a kill/reconnect loop. Floor the
+			// reference at streamStart so a freshly-rebuilt stream gets
+			// its own grace period regardless of subscription history.
 			var stale bool
-			if !last.IsZero() {
-				stale = time.Since(last) > inactivity
-			} else {
-				// No message ever observed on this stream. Only flag as stuck
-				// after twice the inactivity window to avoid false positives
-				// on genuinely idle topics during their first minutes.
+			if last.Before(streamStart) {
+				// No message on *this* stream yet (first stream ever, or
+				// reconnected with no traffic since). Use 2x the window
+				// so genuinely idle topics during their first minutes
+				// don't false-positive.
 				stale = time.Since(streamStart) > inactivity*2
+			} else {
+				stale = time.Since(last) > inactivity
 			}
 			if stale {
 				lastStr := "never"

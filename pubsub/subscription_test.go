@@ -189,6 +189,87 @@ func TestStreamWatchdog_InactivityTriggersReconnect(t *testing.T) {
 	}
 }
 
+// TestStreamWatchdog_DoesNotKillFreshlyReconnectedStream is a regression test
+// for the watchdog reconnect loop: LastActivity is subscription-scoped, so
+// after an inactivity-triggered kill the next stream's first poll tick used
+// to read a stale timestamp from the previous stream and trip immediately.
+// With the streamStart floor the new stream gets its own grace window.
+//
+// Critical setup: the first stream MUST deliver a message so LastActivity is
+// non-zero. Without that the buggy code path (`!last.IsZero()`) is never
+// hit and the test cannot distinguish fixed vs. broken behavior.
+func TestStreamWatchdog_DoesNotKillFreshlyReconnectedStream(t *testing.T) {
+	var firstStream atomic.Bool
+	transport := &mockTransport{
+		subscribeFn: func(ctx context.Context, h TransportHandler) error {
+			if firstStream.CompareAndSwap(false, true) {
+				// Deliver one message immediately so LastActivity is set
+				// to ~now. Any later kill+reconnect after the inactivity
+				// window thus sees a stale LastActivity that exceeds the
+				// window — which used to mean instant re-kill.
+				_ = h(ctx, &TransportMessage{
+					Envelope:   Envelope{ID: "msg-1", Data: []byte("hello")},
+					ReceivedAt: time.Now(),
+					Ack:        func() error { return nil },
+					Nack:       func() error { return nil },
+					Extend:     func(time.Duration) error { return nil },
+					Done:       make(chan struct{}),
+				})
+			}
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	}
+	logger := &recordingLogger{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client, err := New(ctx, transport, WithLogger(logger))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	const inactivity = 150 * time.Millisecond
+
+	sub, err := client.Subscribe(
+		"topic-reconnect-loop",
+		HandlerFunc(func(_ context.Context, _ *Message) error { return nil }),
+		WithSubscriptionStreamRefreshInterval(-1),
+		WithSubscriptionInactivityTimeout(inactivity),
+	)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer sub.Stop(ctx)
+
+	// Wait for the watchdog's first kill (the message arrives ~immediately;
+	// the stream then idles past the inactivity window and gets killed).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if transport.subscribeCalls.Load() >= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := transport.subscribeCalls.Load(); got < 2 {
+		t.Fatalf("expected first reconnect after %v, got %d Subscribe calls", 2*inactivity, got)
+	}
+
+	// Critical assertion: within one inactivity window after the reconnect,
+	// the new stream must survive — the previous bug would re-trip on the
+	// very next poll tick (~inactivity/2 later) producing a 3rd Subscribe
+	// call in well under one window. Sleep one full window minus slack and
+	// verify Subscribe count is still 2.
+	reconnectAt := time.Now()
+	callsAtReconnect := transport.subscribeCalls.Load()
+	time.Sleep(inactivity - 20*time.Millisecond)
+	if got := transport.subscribeCalls.Load(); got > callsAtReconnect {
+		t.Fatalf("watchdog killed freshly reconnected stream within its own grace window: %d Subscribe calls within %v of reconnect (want %d)",
+			got, time.Since(reconnectAt), callsAtReconnect)
+	}
+}
+
 // TestReceiveError_PermanentLogsAsError asserts NotFound / PermissionDenied are
 // surfaced as ERROR logs so they are not buried in WARN-level reconnect noise.
 func TestReceiveError_PermanentLogsAsError(t *testing.T) {
