@@ -53,3 +53,18 @@ func (d *redisDedupeStore) Seen(ctx context.Context, id string, ttl time.Duratio
 	}
 	return !created, nil
 }
+
+func (d *redisDedupeStore) Delete(ctx context.Context, id string) error {
+	return d.client.Del(ctx, d.prefix+":"+id).Err()
+}
+
+func (d *redisDedupeStore) Extend(ctx context.Context, id string, ttl time.Duration) error {
+	if ttl <= 0 {
+		return nil
+	}
+	// EXPIRE returns false (no error) when the key does not exist; treat
+	// that as the documented no-op so a Seen-then-Extend race never
+	// resurrects an already-expired key with a long TTL.
+	_, err := d.client.Expire(ctx, d.prefix+":"+id, ttl).Result()
+	return err
+}

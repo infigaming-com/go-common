@@ -18,6 +18,17 @@ import (
 // further when inactivityTimeout is small (e.g. in tests).
 const maxInactivityCheckInterval = 30 * time.Second
 
+// dedupeOccupyTTL is the short-lived window written by the pre-handler
+// SETNX. It must outlive the longest possible handler run (ack_deadline +
+// max_extension on every supported subscription) so that two pods racing on
+// the same redelivered message can never both pass the Seen check. After
+// the handler returns, the subscription either Extend()s the key to the
+// configured DeduplicationConfig.TTL (success / terminal failure) or
+// Delete()s it (retryable failure). 120s comfortably covers the worst
+// configured handler budget on this codebase (ack_deadline=20s +
+// max_extension=60s = 80s) with 50 % slack for clock skew and SDK delays.
+const dedupeOccupyTTL = 120 * time.Second
+
 // inactivityCheckInterval returns a poll cadence that is always at most half
 // the inactivity window so the watchdog can detect a timeout within one window.
 func inactivityCheckInterval(timeout time.Duration) time.Duration {
@@ -346,22 +357,12 @@ func (s *subscription) handleTransportMessage(ctx context.Context, raw *Transpor
 		s.logger.Warn(ctx, "subscription circuit open", "topic", s.Topic(), "message", raw.ID)
 		return raw.Nack()
 	}
-	if s.dedupe != nil {
-		seen, err := s.dedupe.Seen(ctx, raw.ID, s.dedupeTTL)
-		if err != nil {
-			// Fail open: a flaky dedupe store should never block delivery.
-			// Reprocessing a message is far cheaper than dropping one.
-			s.logger.Warn(ctx, "subscription dedupe check failed, processing message",
-				"topic", s.Topic(), "message", raw.ID, "err", err)
-		} else if seen {
-			s.logger.Debug(ctx, "subscription dedupe drop", "topic", s.Topic(), "message", raw.ID)
-			if err := raw.Ack(); err != nil {
-				s.logger.Error(ctx, "dedupe ack failed", "topic", s.Topic(), "message", raw.ID, "err", err)
-				return err
-			}
-			return nil
-		}
-	}
+	// Dedupe used to gate this code path: if Seen returned true the message
+	// was Acked here without ever reaching the worker, and the key was held
+	// for the full configured TTL even when the handler later failed. That
+	// silently dropped legitimate retries and made dedupe effectively a
+	// race against the GCP redelivery window. Dedupe is now invoked from
+	// process(), tightly bracketed around the handler call — see there.
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -402,6 +403,27 @@ func (s *subscription) process(ctx context.Context, msg *Message, meta MessageMe
 	if msg == nil {
 		return
 	}
+	// Pre-handler dedupe occupancy. SETNX with a TTL just long enough to
+	// cover the longest possible handler run; another worker / pod racing
+	// on the same redelivered id will see seen=true and exit cleanly.
+	// Use s.ctx (subscription-scoped) for the dedupe ops so a per-message
+	// deadline cancellation does not poison the cleanup.
+	if s.dedupe != nil {
+		seen, err := s.dedupe.Seen(s.ctx, meta.ID, dedupeOccupyTTL)
+		if err != nil {
+			// Fail open: a flaky dedupe store should never block delivery.
+			// Reprocessing a message is far cheaper than dropping one.
+			s.logger.Warn(ctx, "subscription dedupe check failed, processing message",
+				"topic", s.Topic(), "message", meta.ID, "err", err)
+		} else if seen {
+			s.logger.Debug(ctx, "subscription dedupe drop", "topic", s.Topic(), "message", meta.ID)
+			if ackErr := msg.Ack(); ackErr != nil {
+				s.logger.Error(ctx, "dedupe ack failed", "topic", s.Topic(), "message", meta.ID, "err", ackErr)
+			}
+			return
+		}
+	}
+
 	extendStop := make(chan struct{})
 	var extendWG sync.WaitGroup
 	if s.options.maxExtension > 0 {
@@ -470,6 +492,11 @@ func (s *subscription) extendLoop(ctx context.Context, msg *Message, stop <-chan
 }
 
 func (s *subscription) onSuccess(ctx context.Context, msg *Message, meta MessageMetadata, start time.Time) {
+	// Extend the dedupe key BEFORE ack so a redelivery that races the ack
+	// reply (network blip, GCP-side retry) sees the long TTL instead of
+	// the short occupancy window. Use s.ctx so a per-message deadline
+	// cancellation does not leave the key at occupancy TTL.
+	s.extendDedupeAfterHandler(meta.ID)
 	if err := msg.Ack(); err != nil {
 		s.logger.Error(ctx, "ack failed", "topic", s.Topic(), "message", msg.ID(), "err", err)
 	}
@@ -484,6 +511,11 @@ func (s *subscription) onSuccess(ctx context.Context, msg *Message, meta Message
 func (s *subscription) onPermanentFailure(ctx context.Context, msg *Message, meta MessageMetadata, err error) {
 	s.logger.Warn(ctx, "permanent failure", "topic", s.Topic(), "message", msg.ID(), "err", err)
 	s.forwardDeadLetter(ctx, msg, meta)
+	// Terminal outcome (dead-letter or max retries) — same as success from
+	// the redelivery point of view: we are done with this id and any later
+	// Pub/Sub redelivery should be dropped, not handed to the dead-letter
+	// path again.
+	s.extendDedupeAfterHandler(meta.ID)
 	if err := msg.Ack(); err != nil {
 		s.logger.Error(ctx, "ack after permanent failure", "topic", s.Topic(), "message", msg.ID(), "err", err)
 	}
@@ -504,11 +536,33 @@ func (s *subscription) onFailure(ctx context.Context, msg *Message, meta Message
 	}
 	s.breaker.fail()
 	s.recordHealth(meta.ID, true, err.Error())
+	// Retryable failure: drop the dedupe occupancy so the inbound
+	// redelivery flows back into the handler instead of being silently
+	// deduped. Done before Nack to close the race where the redelivery
+	// arrives while the occupancy key still exists.
+	if s.dedupe != nil {
+		if delErr := s.dedupe.Delete(s.ctx, meta.ID); delErr != nil {
+			s.logger.Warn(ctx, "dedupe delete on retry failed", "topic", s.Topic(), "message", meta.ID, "err", delErr)
+		}
+	}
 	if nackErr := msg.Nack(); nackErr != nil {
 		s.logger.Error(ctx, "nack failed", "topic", s.Topic(), "message", msg.ID(), "err", nackErr)
 	}
 	if s.hooks.OnFailure != nil {
 		s.hooks.OnFailure(ctx, s.Topic(), meta, err)
+	}
+}
+
+// extendDedupeAfterHandler bumps the dedupe key from occupancy TTL to the
+// configured DeduplicationConfig.TTL so that subsequent Pub/Sub
+// redeliveries of the same id are silently dropped for the full window.
+// Safe to call when dedupe is disabled (no-op).
+func (s *subscription) extendDedupeAfterHandler(id string) {
+	if s.dedupe == nil || s.dedupeTTL <= 0 {
+		return
+	}
+	if err := s.dedupe.Extend(s.ctx, id, s.dedupeTTL); err != nil {
+		s.logger.Warn(s.ctx, "dedupe extend failed", "topic", s.Topic(), "message", id, "err", err)
 	}
 }
 
