@@ -89,6 +89,74 @@ func TestInMemoryDedupeStore_ConcurrentSafe(t *testing.T) {
 	wg.Wait()
 }
 
+func TestInMemoryDedupeStore_DeleteAllowsReSeen(t *testing.T) {
+	t.Parallel()
+	s := newInMemoryDedupeStore(8)
+	ctx := context.Background()
+
+	_, _ = s.Seen(ctx, "id-1", time.Hour)
+	if err := s.Delete(ctx, "id-1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	seen, err := s.Seen(ctx, "id-1", time.Hour)
+	if err != nil {
+		t.Fatalf("post-delete Seen: %v", err)
+	}
+	if seen {
+		t.Fatalf("post-delete should be not-seen (Delete must remove the key)")
+	}
+}
+
+func TestInMemoryDedupeStore_DeleteMissingIsNoop(t *testing.T) {
+	t.Parallel()
+	s := newInMemoryDedupeStore(8)
+	if err := s.Delete(context.Background(), "never-seen"); err != nil {
+		t.Fatalf("Delete on missing key must be a no-op, got: %v", err)
+	}
+}
+
+func TestInMemoryDedupeStore_ExtendBumpsTTL(t *testing.T) {
+	t.Parallel()
+	s := newInMemoryDedupeStore(8)
+	ctx := context.Background()
+
+	// Short occupancy TTL, then Extend to a long TTL — the key must
+	// survive past the original window. Mirrors the subscription's
+	// Seen(occupy) → handler → Extend(long) flow.
+	_, _ = s.Seen(ctx, "id-1", 20*time.Millisecond)
+	if err := s.Extend(ctx, "id-1", time.Hour); err != nil {
+		t.Fatalf("Extend: %v", err)
+	}
+	time.Sleep(40 * time.Millisecond)
+	seen, err := s.Seen(ctx, "id-1", time.Hour)
+	if err != nil {
+		t.Fatalf("post-extend Seen: %v", err)
+	}
+	if !seen {
+		t.Fatalf("Extend should have bumped TTL beyond the original window")
+	}
+}
+
+func TestInMemoryDedupeStore_ExtendMissingIsNoop(t *testing.T) {
+	t.Parallel()
+	s := newInMemoryDedupeStore(8)
+	ctx := context.Background()
+
+	// Extending a never-seen key must not silently resurrect it. Otherwise
+	// a Seen-then-Extend race after expiry would re-create the key with
+	// the long TTL and shadow the next legitimate redelivery.
+	if err := s.Extend(ctx, "phantom", time.Hour); err != nil {
+		t.Fatalf("Extend missing: %v", err)
+	}
+	seen, err := s.Seen(ctx, "phantom", time.Hour)
+	if err != nil {
+		t.Fatalf("post-extend Seen: %v", err)
+	}
+	if seen {
+		t.Fatalf("Extend on missing key must not create the entry")
+	}
+}
+
 func TestRedisDedupeStore_FirstThenSeen(t *testing.T) {
 	t.Parallel()
 	mr := miniredis.RunT(t)
@@ -132,6 +200,86 @@ func TestRedisDedupeStore_TTLExpiry(t *testing.T) {
 	}
 	if seen {
 		t.Fatalf("after TTL expiry should be not-seen again")
+	}
+}
+
+func TestRedisDedupeStore_DeleteAllowsReSeen(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	store := NewRedisDedupeStore(client, "test:dedupe:topic-del")
+	ctx := context.Background()
+
+	_, _ = store.Seen(ctx, "msg-1", time.Hour)
+	if err := store.Delete(ctx, "msg-1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	seen, err := store.Seen(ctx, "msg-1", time.Hour)
+	if err != nil {
+		t.Fatalf("post-delete Seen: %v", err)
+	}
+	if seen {
+		t.Fatalf("post-delete should be not-seen")
+	}
+}
+
+func TestRedisDedupeStore_DeleteMissingIsNoop(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	store := NewRedisDedupeStore(client, "test:dedupe:topic-del-missing")
+	if err := store.Delete(context.Background(), "never-seen"); err != nil {
+		t.Fatalf("Delete on missing key must be a no-op, got: %v", err)
+	}
+}
+
+func TestRedisDedupeStore_ExtendBumpsTTL(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	store := NewRedisDedupeStore(client, "test:dedupe:topic-ext")
+	ctx := context.Background()
+
+	_, _ = store.Seen(ctx, "msg-1", 100*time.Millisecond)
+	if err := store.Extend(ctx, "msg-1", time.Hour); err != nil {
+		t.Fatalf("Extend: %v", err)
+	}
+	mr.FastForward(500 * time.Millisecond)
+	seen, err := store.Seen(ctx, "msg-1", time.Hour)
+	if err != nil {
+		t.Fatalf("post-extend Seen: %v", err)
+	}
+	if !seen {
+		t.Fatalf("Extend should have outlived the original 100ms TTL")
+	}
+}
+
+func TestRedisDedupeStore_ExtendMissingIsNoop(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	store := NewRedisDedupeStore(client, "test:dedupe:topic-ext-missing")
+	ctx := context.Background()
+
+	// EXPIRE on a missing key returns 0 from Redis; we want that to
+	// surface as a no-op (no error), and crucially not to create the key.
+	if err := store.Extend(ctx, "phantom", time.Hour); err != nil {
+		t.Fatalf("Extend missing: %v", err)
+	}
+	seen, err := store.Seen(ctx, "phantom", time.Hour)
+	if err != nil {
+		t.Fatalf("post-extend Seen: %v", err)
+	}
+	if seen {
+		t.Fatalf("Extend on missing key must not create it")
 	}
 }
 

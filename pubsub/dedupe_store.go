@@ -16,19 +16,29 @@ import (
 // "not seen" answer — fail-open. Dropping a message because the dedupe store
 // is unhealthy is strictly worse than reprocessing it.
 //
-// IMPORTANT — pre-handler semantics:
+// Lifecycle (managed by subscription, see subscription.process):
 //
-// Seen is called BEFORE the handler runs. The dedupe key is therefore set
-// even if the handler later returns an error and the message is Nacked.
-// Within the TTL window, every redelivery of that id is silently dropped.
+//  1. Seen(id, occupyTTL)
+//     Race-blocking SETNX with a short TTL just long enough to cover the
+//     longest possible handler run (ack_deadline + max_extension + slack).
+//     A true return means another worker / pod is already processing the
+//     same id — the caller should ack and bail.
 //
-//	Use this ONLY for at-most-once side effects:
-//	  ✓ Slack / Telegram / push notifications
-//	  ✓ One-shot external API calls (payment-channel webhooks, etc.)
+//  2. After the handler returns:
+//     - success or terminal failure (dead-letter / max retries):
+//     Extend(id, ttl)  — bump TTL to the GCP redelivery-safety window
+//     so subsequent Pub/Sub redeliveries are dropped.
+//     - retryable failure (handler returned err, message will be Nack'd):
+//     Delete(id)       — let the redelivery flow back into the handler
+//     instead of being silently dedupe'd.
 //
-//	Do NOT enable dedupe on handlers that need at-least-once delivery:
-//	  ✗ DB writes that must commit eventually
-//	  ✗ Bet settlement, balance updates, anything ledger-like
+//     Use dedupe ONLY for at-most-once side effects:
+//     ✓ Slack / Telegram / push notifications
+//     ✓ One-shot external API calls (payment-channel webhooks, etc.)
+//
+//     Do NOT enable dedupe on handlers that need at-least-once delivery:
+//     ✗ DB writes that must commit eventually
+//     ✗ Bet settlement, balance updates, anything ledger-like
 //
 // If a handler is at-least-once but its side effects are also expensive
 // to repeat, do not enable dedupe here — instead make the handler itself
@@ -38,6 +48,16 @@ type DedupeStore interface {
 	// was already present. A true return means the caller should skip the
 	// message.
 	Seen(ctx context.Context, id string, ttl time.Duration) (bool, error)
+	// Delete removes id from the store. Used by the subscription to undo a
+	// pre-handler occupancy when the handler returns a retryable error, so
+	// that the eventual Pub/Sub redelivery can flow into a fresh handler
+	// invocation. Must be a no-op if the key is absent.
+	Delete(ctx context.Context, id string) error
+	// Extend resets the TTL on an existing id. Called after a handler
+	// completes (successfully or via terminal failure) to widen the window
+	// during which subsequent redeliveries are silently dropped. Must be a
+	// no-op if the key is absent (treat as "nothing to extend").
+	Extend(ctx context.Context, id string, ttl time.Duration) error
 }
 
 // newInMemoryDedupeStore returns the default in-process dedupe implementation.
@@ -72,6 +92,29 @@ func (d *inMemoryDedupeStore) Seen(_ context.Context, id string, ttl time.Durati
 	}
 	d.items[id] = now.Add(ttl)
 	return false, nil
+}
+
+func (d *inMemoryDedupeStore) Delete(_ context.Context, id string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.items, id)
+	return nil
+}
+
+func (d *inMemoryDedupeStore) Extend(_ context.Context, id string, ttl time.Duration) error {
+	if ttl <= 0 {
+		return nil
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	// No-op when the key has already expired or was never set; the caller
+	// has already moved on and re-creating the entry here would race with
+	// Seen on a future redelivery.
+	if _, ok := d.items[id]; !ok {
+		return nil
+	}
+	d.items[id] = time.Now().Add(ttl)
+	return nil
 }
 
 // evictLocked is called with d.mu held when len(d.items) >= d.size. It first

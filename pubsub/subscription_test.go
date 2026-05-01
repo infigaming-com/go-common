@@ -95,7 +95,264 @@ func containsStr(s, sub string) bool {
 	return false
 }
 
-// TestStreamWatchdog_PeriodicRefresh verifies the preventive refresh cancels
+// spyDedupeStore wraps an inMemoryDedupeStore so tests can assert on the
+// Seen/Extend/Delete call sequence the subscription drives. Forwards real
+// behavior so race-blocking via SETNX continues to work.
+type spyDedupeStore struct {
+	inner                         DedupeStore
+	mu                            sync.Mutex
+	seen, extend, delete          int
+	lastSeenTTL, lastExtendTTL    time.Duration
+	seenIDs, extendIDs, deleteIDs []string
+}
+
+func newSpyDedupe(size int) *spyDedupeStore {
+	return &spyDedupeStore{inner: newInMemoryDedupeStore(size)}
+}
+
+func (s *spyDedupeStore) Seen(ctx context.Context, id string, ttl time.Duration) (bool, error) {
+	s.mu.Lock()
+	s.seen++
+	s.lastSeenTTL = ttl
+	s.seenIDs = append(s.seenIDs, id)
+	s.mu.Unlock()
+	return s.inner.Seen(ctx, id, ttl)
+}
+
+func (s *spyDedupeStore) Delete(ctx context.Context, id string) error {
+	s.mu.Lock()
+	s.delete++
+	s.deleteIDs = append(s.deleteIDs, id)
+	s.mu.Unlock()
+	return s.inner.Delete(ctx, id)
+}
+
+func (s *spyDedupeStore) Extend(ctx context.Context, id string, ttl time.Duration) error {
+	s.mu.Lock()
+	s.extend++
+	s.lastExtendTTL = ttl
+	s.extendIDs = append(s.extendIDs, id)
+	s.mu.Unlock()
+	return s.inner.Extend(ctx, id, ttl)
+}
+
+func (s *spyDedupeStore) snapshot() (seen, extend, delete int, lastSeenTTL, lastExtendTTL time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.seen, s.extend, s.delete, s.lastSeenTTL, s.lastExtendTTL
+}
+
+// deliverOne installs a subscribeFn that delivers a single TransportMessage
+// (with the supplied ID) on the first stream and then blocks. ackCh receives
+// "ack" or "nack" based on which terminal the subscription chose, so tests
+// can synchronize on completion without scanning logs.
+func deliverOne(id string, ackCh chan<- string) func(ctx context.Context, h TransportHandler) error {
+	var delivered atomic.Bool
+	return func(ctx context.Context, h TransportHandler) error {
+		if delivered.CompareAndSwap(false, true) {
+			_ = h(ctx, &TransportMessage{
+				Envelope:   Envelope{ID: id},
+				ReceivedAt: time.Now(),
+				Ack:        func() error { ackCh <- "ack"; return nil },
+				Nack:       func() error { ackCh <- "nack"; return nil },
+				Extend:     func(time.Duration) error { return nil },
+				Done:       make(chan struct{}),
+			})
+		}
+		<-ctx.Done()
+		return ctx.Err()
+	}
+}
+
+// TestDedupe_HandlerSuccess_ExtendsTTL verifies the post-handler flow on the
+// happy path: Seen with the short occupancy TTL, then Extend to the
+// configured long TTL, then Ack. No Delete.
+func TestDedupe_HandlerSuccess_ExtendsTTL(t *testing.T) {
+	const longTTL = 7200 * time.Second
+	ackCh := make(chan string, 4)
+	transport := &mockTransport{subscribeFn: deliverOne("msg-success", ackCh)}
+	logger := &recordingLogger{}
+	spy := newSpyDedupe(8)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client, err := New(ctx, transport, WithLogger(logger))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	sub, err := client.Subscribe(
+		"topic-success",
+		HandlerFunc(func(_ context.Context, _ *Message) error { return nil }),
+		WithSubscriptionStreamRefreshInterval(-1),
+		WithSubscriptionInactivityTimeout(-1),
+		WithSubscriptionDeduplication(DeduplicationConfig{Enabled: true, TTL: longTTL, Size: 16}),
+		WithSubscriptionDedupeStore(spy),
+	)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer sub.Stop(ctx)
+
+	select {
+	case got := <-ackCh:
+		if got != "ack" {
+			t.Fatalf("expected ack on success, got %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("handler/ack did not complete in 2s")
+	}
+
+	// Drain a second tick to avoid race with Extend running just after Ack.
+	time.Sleep(50 * time.Millisecond)
+
+	seen, extend, deleted, seenTTL, extendTTL := spy.snapshot()
+	if seen != 1 || extend != 1 || deleted != 0 {
+		t.Fatalf("Seen=%d Extend=%d Delete=%d (want 1/1/0)", seen, extend, deleted)
+	}
+	if seenTTL != dedupeOccupyTTL {
+		t.Fatalf("Seen TTL=%v, want %v (occupancy)", seenTTL, dedupeOccupyTTL)
+	}
+	if extendTTL != longTTL {
+		t.Fatalf("Extend TTL=%v, want %v (configured long)", extendTTL, longTTL)
+	}
+}
+
+// TestDedupe_RetryableFailure_DeletesKey covers the retry path: handler
+// returns a non-permanent error, the subscription Delete()s the dedupe key,
+// then Nacks. Without Delete the inbound redelivery would be silently
+// dedupe'd and the at-least-once handler would never get a second chance.
+func TestDedupe_RetryableFailure_DeletesKey(t *testing.T) {
+	ackCh := make(chan string, 4)
+	transport := &mockTransport{subscribeFn: deliverOne("msg-retry", ackCh)}
+	logger := &recordingLogger{}
+	spy := newSpyDedupe(8)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client, err := New(ctx, transport, WithLogger(logger))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	sub, err := client.Subscribe(
+		"topic-retry",
+		HandlerFunc(func(_ context.Context, _ *Message) error {
+			return errors.New("transient handler failure")
+		}),
+		WithSubscriptionStreamRefreshInterval(-1),
+		WithSubscriptionInactivityTimeout(-1),
+		WithSubscriptionDeduplication(DeduplicationConfig{Enabled: true, TTL: time.Hour, Size: 16}),
+		WithSubscriptionDedupeStore(spy),
+		// MaxAttempts >= 2 so the first failure goes through onFailure
+		// (Nack + Delete) instead of being escalated to permanent.
+		WithSubscriptionRetry(RetryPolicy{MaxAttempts: 3, InitialBackoff: time.Millisecond, MaxBackoff: 10 * time.Millisecond, Multiplier: 2}),
+	)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer sub.Stop(ctx)
+
+	select {
+	case got := <-ackCh:
+		if got != "nack" {
+			t.Fatalf("expected nack on retryable failure, got %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("handler/nack did not complete in 2s")
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	seen, extend, deleted, _, _ := spy.snapshot()
+	if seen != 1 || extend != 0 || deleted != 1 {
+		t.Fatalf("Seen=%d Extend=%d Delete=%d (want 1/0/1)", seen, extend, deleted)
+	}
+}
+
+// TestDedupe_RaceBlocked_SecondInvocationSkipsHandler verifies the
+// pre-handler SETNX still blocks a concurrent second processing of the same
+// id (e.g. cross-pod redelivery). The first occupancy must be visible to
+// the second Seen() call before the handler completes — we use a slow
+// handler to widen that window.
+func TestDedupe_RaceBlocked_SecondInvocationSkipsHandler(t *testing.T) {
+	spy := newSpyDedupe(8)
+	handlerStart := make(chan struct{})
+	handlerRelease := make(chan struct{})
+	var handlerCalls atomic.Int32
+
+	// Two transports sharing the same dedupe spy — like two pods each
+	// receiving the same redelivered message.
+	makeTransport := func(id string, ackCh chan<- string) *mockTransport {
+		return &mockTransport{subscribeFn: deliverOne(id, ackCh)}
+	}
+	ackA := make(chan string, 2)
+	ackB := make(chan string, 2)
+	transportA := makeTransport("dup-id", ackA)
+	transportB := makeTransport("dup-id", ackB)
+	loggerA := &recordingLogger{}
+	loggerB := &recordingLogger{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	clientA, _ := New(ctx, transportA, WithLogger(loggerA))
+	clientB, _ := New(ctx, transportB, WithLogger(loggerB))
+
+	slowHandler := HandlerFunc(func(c context.Context, _ *Message) error {
+		handlerCalls.Add(1)
+		close(handlerStart)
+		select {
+		case <-handlerRelease:
+		case <-c.Done():
+		}
+		return nil
+	})
+	fastHandler := HandlerFunc(func(_ context.Context, _ *Message) error {
+		handlerCalls.Add(1)
+		return nil
+	})
+
+	subA, _ := clientA.Subscribe(
+		"topic-race",
+		slowHandler,
+		WithSubscriptionStreamRefreshInterval(-1),
+		WithSubscriptionInactivityTimeout(-1),
+		WithSubscriptionDeduplication(DeduplicationConfig{Enabled: true, TTL: time.Hour, Size: 16}),
+		WithSubscriptionDedupeStore(spy),
+	)
+	defer subA.Stop(ctx)
+
+	// Wait for slowHandler to start so the dedupe key is occupied.
+	select {
+	case <-handlerStart:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("slow handler never started")
+	}
+
+	subB, _ := clientB.Subscribe(
+		"topic-race",
+		fastHandler,
+		WithSubscriptionStreamRefreshInterval(-1),
+		WithSubscriptionInactivityTimeout(-1),
+		WithSubscriptionDeduplication(DeduplicationConfig{Enabled: true, TTL: time.Hour, Size: 16}),
+		WithSubscriptionDedupeStore(spy),
+	)
+	defer subB.Stop(ctx)
+
+	// B should ack immediately without invoking its handler.
+	select {
+	case got := <-ackB:
+		if got != "ack" {
+			t.Fatalf("B should ack on dedupe drop, got %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("B did not ack within 2s — dedupe failed to block the race")
+	}
+	if got := handlerCalls.Load(); got != 1 {
+		t.Fatalf("handler called %d times, want 1 (slow handler only — B must have skipped)", got)
+	}
+
+	close(handlerRelease)
+	<-ackA
+}
+
 // the current Subscribe call on the configured cadence so the broker stream is
 // torn down and re-established.
 func TestStreamWatchdog_PeriodicRefresh(t *testing.T) {
